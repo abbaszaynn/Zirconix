@@ -1,8 +1,10 @@
+import { useEffect } from 'react';
 import { Tabs } from 'expo-router';
 import { Text } from 'react-native';
 
-import { usePendingApprovals } from '../../lib/queries';
+import { useRealtimeSync, useTransferVotes } from '../../lib/queries';
 import { useSession } from '../../lib/session';
+import { registerForPush } from '../../lib/push';
 import { color, type } from '../../lib/theme';
 
 /**
@@ -14,8 +16,19 @@ function Glyph({ char, focused }: { char: string; focused: boolean }) {
 }
 
 export default function TabsLayout() {
-  const { activeEntity } = useSession();
-  const { data: pending } = usePendingApprovals(activeEntity?.id);
+  const { activeEntity, director } = useSession();
+  const { data: pending } = useTransferVotes(activeEntity?.id, true);
+
+  // Every director's screens follow the database, so a transfer recorded on one
+  // phone updates the badge and the dashboard on the other seven without anyone
+  // pulling to refresh.
+  useRealtimeSync(!!director);
+
+  // Fails soft: no token on a simulator or the web build, and none if the
+  // director declines. In-app notifications are written either way.
+  useEffect(() => {
+    if (director) void registerForPush();
+  }, [director]);
 
   return (
     <Tabs
@@ -39,7 +52,7 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="expenditures"
         options={{
-          title: 'Ledger',
+          title: 'My spending',
           tabBarIcon: ({ focused }) => <Glyph char="≡" focused={focused} />,
         }}
       />

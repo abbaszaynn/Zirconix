@@ -12,10 +12,16 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
 
 import { useLogExpenditure, useMyAdvances } from '../../lib/queries';
 import { useSession } from '../../lib/session';
-import { compressImage, uploadReceipt, type PreparedReceipt } from '../../lib/receipts';
+import {
+  compressImage,
+  preparePdf,
+  uploadReceipt,
+  type PreparedReceipt,
+} from '../../lib/receipts';
 import { humanError, money, shortDate } from '../../lib/format';
 import { color, radius, space, type } from '../../lib/theme';
 import { Banner, Button, Card, Choice, Empty, Field, Loading, Money } from '../../components/ui';
@@ -27,8 +33,6 @@ const CATEGORIES = [
   'Lease & regulatory fees',
   'Contingency',
 ];
-
-const THRESHOLD = 1000000;
 
 export default function NewExpenditure() {
   const router = useRouter();
@@ -53,7 +57,6 @@ export default function NewExpenditure() {
 
   const numericAmount = Number(amount.replace(/,/g, ''));
   const amountValid = Number.isFinite(numericAmount) && numericAmount > 0;
-  const needsApproval = amountValid && numericAmount >= THRESHOLD;
   const overAdvance = selected && amountValid && numericAmount > Number(selected.remaining);
 
   const canSubmit =
@@ -96,6 +99,29 @@ export default function NewExpenditure() {
     }
   }
 
+  /**
+   * A PDF invoice is attached as-is — no compression, because the point of a PDF
+   * receipt is that it stays the document the supplier issued.
+   */
+  async function pickPdf() {
+    setError(null);
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: 'application/pdf',
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled || !result.assets?.[0]) return;
+
+      const asset = result.assets[0];
+      setPreparing(true);
+      setReceipt(await preparePdf(asset.uri, asset.size ?? undefined));
+    } catch (e) {
+      setError(humanError(e));
+    } finally {
+      setPreparing(false);
+    }
+  }
+
   async function submit() {
     if (!canSubmit || !activeEntity || !receipt || !disbursementId || !category) return;
     setError(null);
@@ -106,7 +132,7 @@ export default function NewExpenditure() {
       // it is unreferenced and invisible to every query.
       const uploaded = await uploadReceipt(activeEntity.id, receipt);
 
-      const created = await logExpenditure.mutateAsync({
+      await logExpenditure.mutateAsync({
         disbursementId,
         amount: numericAmount,
         category,
@@ -117,10 +143,9 @@ export default function NewExpenditure() {
       });
 
       Alert.alert(
-        created.status === 'pending_approval' ? 'Sent for approval' : 'Recorded',
-        created.status === 'pending_approval'
-          ? `${money(numericAmount)} is at or above ${money(THRESHOLD)}, so a second director must approve it before it is confirmed.`
-          : `${money(numericAmount)} to ${payee.trim()} has been recorded with its receipt.`,
+        'Recorded',
+        `${money(numericAmount)} to ${payee.trim()} has been recorded with its receipt. ` +
+          'The other directors have been notified.',
         [{ text: 'Done', onPress: () => router.back() }],
       );
     } catch (e) {
@@ -185,13 +210,6 @@ export default function NewExpenditure() {
           keyboardType="decimal-pad"
           placeholder="0"
           style={s.amountInput}
-          hint={
-            overAdvance
-              ? undefined
-              : needsApproval
-                ? `At or above ${money(THRESHOLD)} — a second director will have to approve this.`
-                : undefined
-          }
           error={
             overAdvance
               ? `This is more than the ${money(selected!.remaining)} left on that advance. It will be recorded, but it will show as an unexplained gap until a further disbursement covers it.`
@@ -252,9 +270,16 @@ export default function NewExpenditure() {
                   style={s.flex}
                 />
                 <Button
-                  label="Choose file"
+                  label="Photo"
                   variant="secondary"
                   onPress={() => void pickReceipt('library')}
+                  loading={preparing}
+                  style={s.flex}
+                />
+                <Button
+                  label="PDF"
+                  variant="secondary"
+                  onPress={() => void pickPdf()}
                   loading={preparing}
                   style={s.flex}
                 />
@@ -264,7 +289,7 @@ export default function NewExpenditure() {
         </Card>
 
         <Button
-          label={needsApproval ? 'Submit for approval' : 'Record expenditure'}
+          label="Record expenditure"
           onPress={submit}
           loading={logExpenditure.isPending}
           disabled={!canSubmit}

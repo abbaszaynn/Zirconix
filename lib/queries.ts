@@ -1,7 +1,9 @@
+import { useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { supabase } from './supabase';
 import type {
+  Account,
   Approval,
   ApprovalDecision,
   BudgetSummaryRow,
@@ -12,27 +14,86 @@ import type {
   Expenditure,
   AuditEvent,
   DisbursementMethod,
+  Notification,
+  TransferVoteRow,
 } from './database.types';
 
 export const qk = {
   budget: (entityId: string, period: string) => ['budget', entityId, period] as const,
   accountability: (entityId: string) => ['accountability', entityId] as const,
   directors: () => ['directors'] as const,
+  accounts: (entityId: string) => ['accounts', entityId] as const,
   expenditures: (entityId: string) => ['expenditures', entityId] as const,
   disbursements: (entityId: string) => ['disbursements', entityId] as const,
   myAdvances: (entityId: string, directorId: string) =>
     ['advances', entityId, directorId] as const,
-  pending: (entityId: string) => ['pending', entityId] as const,
+  votes: (entityId: string) => ['votes', entityId] as const,
+  notifications: (directorId: string) => ['notifications', directorId] as const,
   audit: (entityId: string) => ['audit', entityId] as const,
   chain: () => ['chain'] as const,
   periods: (entityId: string) => ['periods', entityId] as const,
 };
 
-/** Everything an entity-scoped view depends on. Used after any write. */
-function invalidateEntity(qc: ReturnType<typeof useQueryClient>, entityId: string) {
-  ['budget', 'accountability', 'expenditures', 'disbursements', 'advances', 'pending', 'audit']
-    .forEach((root) => qc.invalidateQueries({ queryKey: [root] }));
-  void entityId;
+/** Every query root that any write can invalidate. */
+const LIVE_ROOTS = [
+  'budget',
+  'accountability',
+  'expenditures',
+  'disbursements',
+  'advances',
+  'votes',
+  'myVotes',
+  'approvalHistory',
+  'notifications',
+  'audit',
+  'chain',
+] as const;
+
+function invalidateAll(qc: ReturnType<typeof useQueryClient>) {
+  LIVE_ROOTS.forEach((root) => qc.invalidateQueries({ queryKey: [root] }));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Realtime
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Keeps every director's dashboard current without a refresh.
+ *
+ * Postgres publishes the change, Realtime forwards it (subject to the same RLS
+ * the director reads under), and we invalidate rather than patch the cache —
+ * the interesting numbers are all aggregates from views, so a refetch is both
+ * simpler and more likely to be right than trying to apply a row delta to them.
+ */
+export function useRealtimeSync(enabled: boolean) {
+  const qc = useQueryClient();
+
+  useEffect(() => {
+    if (!enabled) return;
+
+    const channel = supabase
+      .channel('zirconix-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'disbursements' }, () =>
+        invalidateAll(qc),
+      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'expenditures' }, () =>
+        invalidateAll(qc),
+      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'approvals' }, () =>
+        invalidateAll(qc),
+      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'budget_lines' }, () =>
+        invalidateAll(qc),
+      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, () =>
+        qc.invalidateQueries({ queryKey: ['notifications'] }),
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [enabled, qc]);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -46,6 +107,25 @@ export function useDirectors() {
       const { data, error } = await supabase.from('directors').select('*').order('full_name');
       if (error) throw error;
       return data as Director[];
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+/** The company accounts a transfer can be paid out of. */
+export function useAccounts(entityId: string | undefined) {
+  return useQuery({
+    queryKey: qk.accounts(entityId ?? ''),
+    enabled: !!entityId,
+    queryFn: async (): Promise<Account[]> => {
+      const { data, error } = await supabase
+        .from('accounts')
+        .select('*')
+        .eq('entity_id', entityId!)
+        .eq('is_active', true)
+        .order('name');
+      if (error) throw error;
+      return data as Account[];
     },
     staleTime: 5 * 60 * 1000,
   });
@@ -138,6 +218,25 @@ export function useExpenditures(entityId: string | undefined) {
   });
 }
 
+/** Only this director's own spending — what the expenditure page lists. */
+export function useMyExpenditures(entityId: string | undefined, directorId: string | undefined) {
+  return useQuery({
+    queryKey: [...qk.expenditures(entityId ?? ''), 'mine', directorId],
+    enabled: !!entityId && !!directorId,
+    queryFn: async (): Promise<Expenditure[]> => {
+      const { data, error } = await supabase
+        .from('expenditures')
+        .select('*')
+        .eq('entity_id', entityId!)
+        .eq('entered_by', directorId!)
+        .order('spent_on', { ascending: false })
+        .limit(200);
+      if (error) throw error;
+      return data as Expenditure[];
+    },
+  });
+}
+
 export function useDisbursements(entityId: string | undefined) {
   return useQuery({
     queryKey: qk.disbursements(entityId ?? ''),
@@ -155,58 +254,70 @@ export function useDisbursements(entityId: string | undefined) {
   });
 }
 
-export type PendingItem = {
-  kind: 'expenditure' | 'disbursement';
-  id: string;
-  amount: number;
-  label: string;
-  submittedBy: string;
-  on: string;
-  category: string;
-};
-
-export function usePendingApprovals(entityId: string | undefined) {
+/** Transfers awaiting a vote, with who has already voted and in what capacity. */
+export function useTransferVotes(entityId: string | undefined, onlyPending = true) {
   return useQuery({
-    queryKey: qk.pending(entityId ?? ''),
+    queryKey: [...qk.votes(entityId ?? ''), onlyPending],
     enabled: !!entityId,
-    queryFn: async (): Promise<PendingItem[]> => {
-      const [exp, dis] = await Promise.all([
-        supabase
-          .from('expenditures')
-          .select('id, amount, payee, category, spent_on, entered_by')
-          .eq('entity_id', entityId!)
-          .eq('status', 'pending_approval'),
-        supabase
-          .from('disbursements')
-          .select('id, amount, disbursed_to_ref, method, disbursed_on, recorded_by')
-          .eq('entity_id', entityId!)
-          .eq('status', 'pending_approval'),
-      ]);
-      if (exp.error) throw exp.error;
-      if (dis.error) throw dis.error;
+    queryFn: async (): Promise<TransferVoteRow[]> => {
+      let q = supabase
+        .from('v_transfer_votes')
+        .select('*')
+        .eq('entity_id', entityId!)
+        .order('amount', { ascending: false });
 
-      const items: PendingItem[] = [
-        ...(exp.data ?? []).map((e) => ({
-          kind: 'expenditure' as const,
-          id: e.id as string,
-          amount: Number(e.amount),
-          label: e.payee as string,
-          submittedBy: e.entered_by as string,
-          on: e.spent_on as string,
-          category: e.category as string,
-        })),
-        ...(dis.data ?? []).map((d) => ({
-          kind: 'disbursement' as const,
-          id: d.id as string,
-          amount: Number(d.amount),
-          label: d.disbursed_to_ref as string,
-          submittedBy: d.recorded_by as string,
-          on: d.disbursed_on as string,
-          category: d.method === 'cash' ? 'Cash advance' : 'Bank transfer',
-        })),
-      ];
+      if (onlyPending) q = q.eq('status', 'pending_approval');
 
-      return items.sort((a, b) => b.amount - a.amount);
+      const { data, error } = await q;
+      if (error) throw error;
+      return data as TransferVoteRow[];
+    },
+  });
+}
+
+/**
+ * Which transfers this director has already voted on.
+ *
+ * v_transfer_votes reports who voted in each ROLE, which is what the board needs
+ * to see, but not "have I voted" — for an independent it cannot, since the view
+ * only counts them. A director must never be shown a live Approve button for a
+ * transfer he has already decided.
+ */
+export function useMyVotes(entityId: string | undefined, directorId: string | undefined) {
+  return useQuery({
+    queryKey: ['myVotes', entityId, directorId],
+    enabled: !!entityId && !!directorId,
+    queryFn: async (): Promise<Record<string, ApprovalDecision>> => {
+      const { data, error } = await supabase
+        .from('approvals')
+        .select('disbursement_id, decision')
+        .eq('entity_id', entityId!)
+        .eq('approver_id', directorId!);
+      if (error) throw error;
+
+      const map: Record<string, ApprovalDecision> = {};
+      for (const row of data ?? []) {
+        if (row.disbursement_id) {
+          map[row.disbursement_id as string] = row.decision as ApprovalDecision;
+        }
+      }
+      return map;
+    },
+  });
+}
+
+export function useNotifications(directorId: string | undefined) {
+  return useQuery({
+    queryKey: qk.notifications(directorId ?? ''),
+    enabled: !!directorId,
+    queryFn: async (): Promise<Notification[]> => {
+      const { data, error } = await supabase
+        .from('notifications')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(100);
+      if (error) throw error;
+      return data as Notification[];
     },
   });
 }
@@ -224,7 +335,7 @@ export function useAuditEvents(entityId: string | undefined, filters?: {
         .select('*')
         .eq('entity_id', entityId!)
         .order('id', { ascending: false })
-        .limit(200);
+        .limit(500);
 
       if (filters?.actorId) q = q.eq('actor_id', filters.actorId);
       if (filters?.table) q = q.eq('table_name', filters.table);
@@ -242,14 +353,30 @@ export function useChainIntegrity() {
     queryFn: async () => {
       const { data, error } = await supabase.rpc('verify_audit_chain', { p_from: 0 });
       if (error) throw error;
-      const row = (Array.isArray(data) ? data[0] : data) as {
+      return (Array.isArray(data) ? data[0] : data) as {
         ok: boolean;
         checked: number;
         first_bad_id: number | null;
       };
-      return row;
     },
     staleTime: 60 * 1000,
+  });
+}
+
+export function useApprovalHistory(entityId: string | undefined) {
+  return useQuery({
+    queryKey: ['approvalHistory', entityId],
+    enabled: !!entityId,
+    queryFn: async (): Promise<Approval[]> => {
+      const { data, error } = await supabase
+        .from('approvals')
+        .select('*')
+        .eq('entity_id', entityId!)
+        .order('decided_at', { ascending: false })
+        .limit(100);
+      if (error) throw error;
+      return data as Approval[];
+    },
   });
 }
 
@@ -260,6 +387,7 @@ export function useChainIntegrity() {
 export type NewDisbursement = {
   entityId: string;
   budgetLineId: string;
+  fromAccountId: string;
   toDirectorId: string;
   amount: number;
   method: DisbursementMethod;
@@ -272,13 +400,15 @@ export function useRecordDisbursement() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: NewDisbursement): Promise<Disbursement> => {
-      // recorded_by and status are set by database triggers; anything sent for
-      // them is overwritten. They are included only to satisfy NOT NULL.
+      // recorded_by, status and required_votes are all set by database triggers;
+      // anything sent for them is overwritten. recorded_by is included only to
+      // satisfy NOT NULL before the trigger replaces it.
       const { data, error } = await supabase
         .from('disbursements')
         .insert({
           entity_id: input.entityId,
           budget_line_id: input.budgetLineId,
+          from_account_id: input.fromAccountId,
           to_director_id: input.toDirectorId,
           amount: input.amount,
           method: input.method,
@@ -292,7 +422,7 @@ export function useRecordDisbursement() {
       if (error) throw error;
       return data as Disbursement;
     },
-    onSuccess: (d) => invalidateEntity(qc, d.entity_id),
+    onSuccess: () => invalidateAll(qc),
   });
 }
 
@@ -327,49 +457,42 @@ export function useLogExpenditure() {
       if (error) throw error;
       return data as Expenditure;
     },
-    onSuccess: (e) => invalidateEntity(qc, e.entity_id),
+    onSuccess: () => invalidateAll(qc),
   });
 }
 
-export function useDecideApproval() {
+/** One director's vote on one transfer. The database tallies and decides. */
+export function useCastVote() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: {
-      targetType: 'expenditure' | 'disbursement';
-      targetId: string;
+      disbursementId: string;
       decision: ApprovalDecision;
       reason?: string;
-    }) => {
-      const { data, error } = await supabase.rpc('decide_approval', {
-        p_target_type: input.targetType,
-        p_target_id: input.targetId,
+    }): Promise<Disbursement> => {
+      const { data, error } = await supabase.rpc('cast_disbursement_vote', {
+        p_disbursement_id: input.disbursementId,
         p_decision: input.decision,
         p_reason: input.reason ?? null,
       });
       if (error) throw error;
-      return data;
+      return data as Disbursement;
     },
-    onSuccess: () => {
-      ['pending', 'expenditures', 'disbursements', 'budget', 'accountability', 'audit'].forEach(
-        (root) => qc.invalidateQueries({ queryKey: [root] }),
-      );
-    },
+    onSuccess: () => invalidateAll(qc),
   });
 }
 
-export function useApprovalHistory(entityId: string | undefined) {
-  return useQuery({
-    queryKey: ['approvalHistory', entityId],
-    enabled: !!entityId,
-    queryFn: async (): Promise<Approval[]> => {
-      const { data, error } = await supabase
-        .from('approvals')
-        .select('*')
-        .eq('entity_id', entityId!)
-        .order('decided_at', { ascending: false })
-        .limit(100);
+export function useMarkNotificationsRead() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (ids: string[]) => {
+      if (ids.length === 0) return;
+      const { error } = await supabase
+        .from('notifications')
+        .update({ read_at: new Date().toISOString() })
+        .in('id', ids);
       if (error) throw error;
-      return data as Approval[];
     },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['notifications'] }),
   });
 }

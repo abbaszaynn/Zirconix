@@ -1,12 +1,12 @@
 import { useState } from 'react';
-import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { Alert, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 
-import { EntitySwitcher } from '../../components/EntitySwitcher';
 import { useAuditEvents, useChainIntegrity, useDirectors } from '../../lib/queries';
 import { useSession } from '../../lib/session';
-import { dateTime } from '../../lib/format';
+import { dateTime, humanError } from '../../lib/format';
+import { exportAuditPdf } from '../../lib/auditPdf';
 import { color, radius, space, type } from '../../lib/theme';
-import { Banner, Card, Empty, Loading, Pill } from '../../components/ui';
+import { Banner, Button, Card, Empty, Loading, Pill } from '../../components/ui';
 
 const TABLES = [
   { value: '', label: 'All' },
@@ -18,10 +18,11 @@ const TABLES = [
 ];
 
 export default function AuditLog() {
-  const { activeEntity } = useSession();
+  const { activeEntity, director } = useSession();
   const [table, setTable] = useState('');
   const [actorId, setActorId] = useState('');
   const [expanded, setExpanded] = useState<number | null>(null);
+  const [printing, setPrinting] = useState(false);
 
   const events = useAuditEvents(activeEntity?.id, {
     table: table || undefined,
@@ -33,9 +34,44 @@ export default function AuditLog() {
   const nameOf = (id: string | null) =>
     id ? (directors?.find((d) => d.id === id)?.full_name ?? 'Unknown') : 'System';
 
+  async function printReport() {
+    if (!activeEntity) return;
+    setPrinting(true);
+    try {
+      // The report states the chain result, so refresh it rather than printing a
+      // cached verdict that may be minutes old.
+      const fresh = await chain.refetch();
+
+      await exportAuditPdf({
+        entityName: activeEntity.name,
+        entityLegalName: activeEntity.legal_name,
+        events: events.data ?? [],
+        directors: directors ?? [],
+        chain: fresh.data ?? chain.data,
+        generatedBy: director?.full_name ?? 'Unknown',
+        filterNote: [
+          table ? TABLES.find((t) => t.value === table)?.label : null,
+          actorId ? nameOf(actorId) : null,
+        ]
+          .filter(Boolean)
+          .join(' · ') || undefined,
+      });
+    } catch (e) {
+      Alert.alert('Could not produce the PDF', humanError(e));
+    } finally {
+      setPrinting(false);
+    }
+  }
+
   const header = (
     <View style={s.header}>
-      <EntitySwitcher />
+      <Button
+        label={printing ? 'Preparing…' : 'Print audit log (PDF)'}
+        variant="secondary"
+        onPress={() => void printReport()}
+        loading={printing}
+        disabled={(events.data ?? []).length === 0}
+      />
 
       {chain.data ? (
         chain.data.ok ? (

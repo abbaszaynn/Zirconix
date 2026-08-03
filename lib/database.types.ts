@@ -24,6 +24,13 @@ export type EntryStatus =
   | 'confirmed'
   | 'rejected';
 export type ApprovalDecision = 'approved' | 'rejected';
+export type VoterRole = 'sender' | 'recipient' | 'independent';
+export type NotificationKind =
+  | 'vote_required'
+  | 'vote_cast'
+  | 'transfer_confirmed'
+  | 'transfer_rejected'
+  | 'expenditure_logged';
 export type AttachmentKind =
   | 'receipt_photo'
   | 'receipt_pdf'
@@ -49,6 +56,35 @@ export interface Director {
   created_at: string;
 }
 
+/**
+ * A company source account. Durr Mines and Zircon Mines are rows here — they are
+ * no longer separate entities, so a transfer records which one paid.
+ */
+export interface Account {
+  id: string;
+  entity_id: string;
+  name: string;
+  kind: 'bank' | 'cash_box';
+  /** Masked tail only, e.g. 'HBL ****4471'. */
+  bank_label: string | null;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface Notification {
+  id: string;
+  entity_id: string;
+  director_id: string;
+  kind: NotificationKind;
+  title: string;
+  body: string;
+  disbursement_id: string | null;
+  expenditure_id: string | null;
+  read_at: string | null;
+  pushed_at: string | null;
+  created_at: string;
+}
+
 export interface BudgetLine {
   id: string;
   entity_id: string;
@@ -65,6 +101,8 @@ export interface Disbursement {
   id: string;
   entity_id: string;
   budget_line_id: string;
+  /** Which company account the money left from. */
+  from_account_id: string;
   to_director_id: string;
   amount: number;
   method: DisbursementMethod;
@@ -72,6 +110,9 @@ export interface Disbursement {
   disbursed_on: string;
   note: string | null;
   status: EntryStatus;
+  /** 2 below the approval threshold, 4 at or above it. Set by the database. */
+  required_votes: number;
+  approval_count: number;
   recorded_by: string;
   created_at: string;
   updated_at: string;
@@ -116,6 +157,8 @@ export interface Approval {
   approver_id: string;
   decision: ApprovalDecision;
   reason: string | null;
+  /** Why this director was entitled to vote. Display only — the tally uses ids. */
+  voter_role: VoterRole | null;
   decided_at: string;
   created_at: string;
 }
@@ -159,6 +202,37 @@ export interface DirectorAccountabilityRow {
   claimed_without_receipt: number;
   /** total_disbursed − total_accounted. Non-zero is a flag, not an error. */
   outstanding: number;
+}
+
+/**
+ * Vote progress for a transfer, joined to the names a director needs to see.
+ *
+ * `principals` is 1 when the sender and recipient are the same person, which is
+ * why `independents_required` is derived rather than being `required_votes - 2`.
+ */
+export interface TransferVoteRow {
+  disbursement_id: string;
+  entity_id: string;
+  amount: number;
+  status: EntryStatus;
+  required_votes: number;
+  approval_count: number;
+  method: DisbursementMethod;
+  disbursed_on: string;
+  note: string | null;
+  from_account_id: string;
+  account_name: string;
+  to_director_id: string;
+  recipient_name: string;
+  recorded_by: string;
+  sender_name: string;
+  category: string;
+  period: string;
+  principals: number;
+  sender_voted: boolean;
+  recipient_voted: boolean;
+  independent_votes: number;
+  independents_required: number;
 }
 
 export interface DisbursementBalanceRow {

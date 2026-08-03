@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react';
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 
-import { EntitySwitcher } from '../../components/EntitySwitcher';
 import {
   useAccountability,
   useBudgetSummary,
@@ -67,7 +66,6 @@ export default function Dashboard() {
         />
       }
     >
-      <EntitySwitcher />
 
       {!hasEnrolledMfa ? (
         <Banner

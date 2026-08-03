@@ -47,6 +47,30 @@ export async function compressImage(
 }
 
 /**
+ * A PDF receipt is taken as-is.
+ *
+ * Compressing it is not an option — expo-image-manipulator cannot read a PDF,
+ * and re-encoding an invoice would be the wrong thing to do to a document
+ * somebody may later need to produce intact. The 5 MB bucket ceiling is the
+ * backstop, and it is checked here so the director is told before the upload
+ * rather than after it fails.
+ */
+const MAX_PDF_BYTES = 5 * 1024 * 1024;
+
+export async function preparePdf(uri: string, sizeHint?: number): Promise<PreparedReceipt> {
+  const byteSize = sizeHint ?? new File(uri).size ?? 0;
+
+  if (byteSize > MAX_PDF_BYTES) {
+    throw new Error(
+      `That PDF is ${(byteSize / 1024 / 1024).toFixed(1)} MB. The limit is 5 MB — ` +
+        'photograph the receipt instead, or export the PDF at a lower quality.',
+    );
+  }
+
+  return { uri, mimeType: 'application/pdf', byteSize, kind: 'receipt_pdf' };
+}
+
+/**
  * Object key layout is '<entity_id>/<year>/<uuid>.<ext>'. The storage RLS policy
  * reads the entity out of the first segment, so this shape is load-bearing —
  * changing it changes who can read the file.

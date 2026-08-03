@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -11,7 +11,13 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 
-import { useBudgetSummary, useDirectors, usePeriods, useRecordDisbursement } from '../../lib/queries';
+import {
+  useAccounts,
+  useBudgetSummary,
+  useDirectors,
+  usePeriods,
+  useRecordDisbursement,
+} from '../../lib/queries';
 import { useSession } from '../../lib/session';
 import { humanError, money } from '../../lib/format';
 import { color, radius, space, type } from '../../lib/theme';
@@ -27,15 +33,25 @@ export default function NewDisbursement() {
   const period = periods?.[0];
   const budget = useBudgetSummary(activeEntity?.id, period);
   const { data: directors } = useDirectors();
+  const accounts = useAccounts(activeEntity?.id);
   const record = useRecordDisbursement();
 
   const [budgetLineId, setBudgetLineId] = useState<string | null>(null);
+  const [fromAccountId, setFromAccountId] = useState<string | null>(null);
   const [toDirectorId, setToDirectorId] = useState<string | null>(null);
   const [amount, setAmount] = useState('');
   const [method, setMethod] = useState<'bank_transfer' | 'cash'>('bank_transfer');
   const [accountRef, setAccountRef] = useState('');
   const [note, setNote] = useState('');
   const [error, setError] = useState<string | null>(null);
+
+  // One account is the common case; preselecting it saves a tap and makes the
+  // field read as a confirmation rather than a question.
+  useEffect(() => {
+    if (!fromAccountId && (accounts.data ?? []).length > 0) {
+      setFromAccountId(accounts.data![0].id);
+    }
+  }, [accounts.data, fromAccountId]);
 
   const line = useMemo(
     () => (budget.data ?? []).find((b) => b.budget_line_id === budgetLineId) ?? null,
@@ -49,18 +65,20 @@ export default function NewDisbursement() {
 
   const canSubmit =
     !!budgetLineId &&
+    !!fromAccountId &&
     !!toDirectorId &&
     amountValid &&
     (method === 'cash' || !!accountRef.trim());
 
   async function submit() {
-    if (!canSubmit || !activeEntity || !budgetLineId || !toDirectorId) return;
+    if (!canSubmit || !activeEntity || !budgetLineId || !fromAccountId || !toDirectorId) return;
     setError(null);
 
     try {
       const created = await record.mutateAsync({
         entityId: activeEntity.id,
         budgetLineId,
+        fromAccountId,
         toDirectorId,
         amount: numericAmount,
         method,
@@ -70,10 +88,12 @@ export default function NewDisbursement() {
       });
 
       Alert.alert(
-        created.status === 'pending_approval' ? 'Sent for approval' : 'Recorded',
-        created.status === 'pending_approval'
-          ? `${money(numericAmount)} is at or above ${money(THRESHOLD)}, so a second director must approve it.`
-          : `${money(numericAmount)} recorded. The receiving director is now accountable for it until receipted expenditures explain it.`,
+        'Sent to the board',
+        `${money(numericAmount)} recorded. Every director has been notified, and it needs ` +
+          `${created.required_votes} votes before it is confirmed — ` +
+          (created.required_votes === 2
+            ? 'yours and the recipient’s.'
+            : 'yours, the recipient’s, and two other directors’.'),
         [{ text: 'Done', onPress: () => router.back() }],
       );
     } catch (e) {
@@ -136,6 +156,16 @@ export default function NewDisbursement() {
         })}
 
         <View style={{ height: space.xl }} />
+
+        <Choice
+          label="Paid from"
+          value={fromAccountId}
+          options={(accounts.data ?? []).map((a) => ({
+            value: a.id,
+            label: a.bank_label ? `${a.name} · ${a.bank_label}` : a.name,
+          }))}
+          onChange={setFromAccountId}
+        />
 
         <Choice
           label="Disbursed to"

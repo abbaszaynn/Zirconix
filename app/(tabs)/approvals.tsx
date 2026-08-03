@@ -1,17 +1,16 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Alert, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 
-import { EntitySwitcher } from '../../components/EntitySwitcher';
 import {
   useApprovalHistory,
-  useDecideApproval,
+  useCastVote,
   useDirectors,
-  usePendingApprovals,
-  type PendingItem,
+  useMyVotes,
+  useTransferVotes,
 } from '../../lib/queries';
 import { useSession } from '../../lib/session';
-import { humanError, money, shortDate, dateTime } from '../../lib/format';
+import { humanError, shortDate } from '../../lib/format';
 import { color, radius, space, type } from '../../lib/theme';
 import {
   Banner,
@@ -24,90 +23,74 @@ import {
   Pill,
   SectionTitle,
 } from '../../components/ui';
+import type { TransferVoteRow } from '../../lib/database.types';
 
 export default function Approvals() {
   const router = useRouter();
   const { activeEntity, director, hasMfaSession, hasEnrolledMfa } = useSession();
 
-  const pending = usePendingApprovals(activeEntity?.id);
+  const votes = useTransferVotes(activeEntity?.id, true);
+  const mine = useMyVotes(activeEntity?.id, director?.id);
   const history = useApprovalHistory(activeEntity?.id);
   const { data: directors } = useDirectors();
-  const decide = useDecideApproval();
+  const cast = useCastVote();
 
-  const [rejecting, setRejecting] = useState<PendingItem | null>(null);
+  const [rejecting, setRejecting] = useState<string | null>(null);
   const [reason, setReason] = useState('');
 
-  const nameOf = (id: string | null | undefined) =>
-    directors?.find((d) => d.id === id)?.full_name ?? '—';
+  const nameOf = useMemo(() => {
+    const m = new Map((directors ?? []).map((d) => [d.id, d.full_name]));
+    return (id: string | null | undefined) => (id ? (m.get(id) ?? 'Unknown') : 'Unknown');
+  }, [directors]);
 
-  function approve(item: PendingItem) {
-    Alert.alert(
-      'Approve this entry?',
-      `${money(item.amount)} — ${item.label}\nSubmitted by ${nameOf(item.submittedBy)}.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Approve',
-          style: 'default',
-          onPress: () => {
-            decide.mutate(
-              { targetType: item.kind, targetId: item.id, decision: 'approved' },
-              { onError: (e) => Alert.alert('Not approved', humanError(e)) },
-            );
-          },
-        },
-      ],
-    );
+  const canVote = hasMfaSession && director?.role !== 'auditor';
+
+  async function submit(row: TransferVoteRow, decision: 'approved' | 'rejected') {
+    try {
+      const result = await cast.mutateAsync({
+        disbursementId: row.disbursement_id,
+        decision,
+        reason: decision === 'rejected' ? reason.trim() : undefined,
+      });
+      setRejecting(null);
+      setReason('');
+
+      Alert.alert(
+        result.status === 'confirmed'
+          ? 'Transfer confirmed'
+          : result.status === 'rejected'
+            ? 'Transfer rejected'
+            : 'Vote recorded',
+        result.status === 'pending_approval'
+          ? `${result.approval_count} of ${result.required_votes} votes in. Every director has been notified.`
+          : 'Every director has been notified.',
+      );
+    } catch (e) {
+      Alert.alert('Could not record your vote', humanError(e));
+    }
   }
 
-  function submitRejection() {
-    if (!rejecting) return;
-    decide.mutate(
-      {
-        targetType: rejecting.kind,
-        targetId: rejecting.id,
-        decision: 'rejected',
-        reason: reason.trim(),
-      },
-      {
-        onSuccess: () => {
-          setRejecting(null);
-          setReason('');
-        },
-        onError: (e) => Alert.alert('Not rejected', humanError(e)),
-      },
-    );
-  }
-
-  if (pending.isLoading) return <Loading />;
-
-  const items = pending.data ?? [];
+  if (votes.isLoading) return <Loading />;
 
   return (
     <ScrollView
       style={s.screen}
-      contentContainerStyle={s.content}
+      contentContainerStyle={s.scroll}
       refreshControl={
-        <RefreshControl
-          refreshing={pending.isFetching}
-          onRefresh={() => {
-            void pending.refetch();
-            void history.refetch();
-          }}
-        />
+        <RefreshControl refreshing={votes.isFetching} onRefresh={() => void votes.refetch()} />
       }
     >
-      <EntitySwitcher />
+      <Text style={s.title}>Approvals</Text>
 
       {!hasEnrolledMfa ? (
         <Banner
           tone="warning"
-          title="Two-step verification required to approve"
-          body="Any entry of PKR 10 lac or more needs a second director's approval, and approving requires a verified session. Set up your authenticator to take part."
+          title="Two-step verification not set up"
+          body="Every transfer now needs your vote, and voting requires two-step verification. Until it is set up you can see transfers but not vote on them."
           action={
             <Button
-              label="Set up now"
-              variant="secondary"
+              label="Set it up"
+              variant="ghost"
               onPress={() => router.push('/(auth)/mfa-enroll')}
             />
           }
@@ -115,105 +98,132 @@ export default function Approvals() {
       ) : !hasMfaSession ? (
         <Banner
           tone="warning"
-          title="Verify this session to approve"
-          body="You are signed in, but this session has not been verified with your authenticator app."
+          title="Enter your code to vote"
+          body="This session has not been verified with your authenticator yet."
           action={
             <Button
               label="Enter code"
-              variant="secondary"
+              variant="ghost"
               onPress={() => router.push('/(auth)/mfa-challenge')}
             />
           }
         />
       ) : null}
 
-      {rejecting ? (
-        <Card style={s.rejectCard}>
-          <Text style={s.rejectTitle}>Reject {money(rejecting.amount)} — {rejecting.label}</Text>
-          <Field
-            label="Reason"
-            value={reason}
-            onChangeText={setReason}
-            placeholder="Why is this being rejected?"
-            multiline
-            style={s.reasonInput}
-            hint="Recorded permanently against the entry. A rejection must say why."
-          />
-          <View style={s.rejectActions}>
-            <Button
-              label="Cancel"
-              variant="ghost"
-              onPress={() => {
-                setRejecting(null);
-                setReason('');
-              }}
-              style={s.flex}
-            />
-            <Button
-              label="Confirm rejection"
-              variant="danger"
-              onPress={submitRejection}
-              loading={decide.isPending}
-              disabled={!reason.trim()}
-              style={s.flex}
-            />
-          </View>
-        </Card>
+      {director?.role === 'auditor' ? (
+        <Banner
+          tone="neutral"
+          title="Read-only access"
+          body="Auditors see every transfer and every vote, but do not vote themselves."
+        />
       ) : null}
 
-      <SectionTitle note={`At or above ${money(1000000)}, a second director must decide`}>
-        Awaiting a decision
+      <SectionTitle note="Sender and recipient below 10 lac; two more directors above it">
+        Awaiting a vote
       </SectionTitle>
 
-      {items.length === 0 ? (
-        <Empty title="Nothing pending" body="No entry is waiting on a second director right now." />
+      {(votes.data ?? []).length === 0 ? (
+        <Empty
+          title="Nothing to vote on"
+          body="Every transfer has been decided. New ones appear here the moment they are recorded."
+        />
       ) : (
-        items.map((item) => {
-          const isMine = item.submittedBy === director?.id;
+        (votes.data ?? []).map((row) => {
+          const myDecision = mine.data?.[row.disbursement_id];
+          const iAmSender = row.recorded_by === director?.id;
+          const iAmRecipient = row.to_director_id === director?.id;
 
           return (
-            <Card key={`${item.kind}:${item.id}`} style={s.pendingCard}>
-              <View style={s.pendingHead}>
-                <View style={s.flex}>
-                  <Text style={s.pendingLabel} numberOfLines={1}>
-                    {item.label}
+            <Card key={row.disbursement_id} style={s.voteCard}>
+              <View style={s.head}>
+                <View style={s.headMain}>
+                  <Money amount={row.amount} size="large" />
+                  <Text style={s.meta}>
+                    to {row.recipient_name} · from {row.account_name}
                   </Text>
-                  <Text style={s.pendingMeta}>
-                    {item.category} · {shortDate(item.on)}
+                  <Text style={s.meta}>
+                    {row.category} · {shortDate(row.disbursed_on)} ·{' '}
+                    {row.method === 'cash' ? 'Cash' : 'Bank transfer'}
                   </Text>
+                  <Text style={s.meta}>recorded by {row.sender_name}</Text>
                 </View>
-                <Money amount={item.amount} size="large" tone="warning" />
+                <Pill
+                  label={`${row.approval_count} of ${row.required_votes}`}
+                  tone={row.approval_count > 0 ? 'warning' : 'neutral'}
+                />
               </View>
 
-              <View style={s.pendingBy}>
-                <Pill label={item.kind} tone="neutral" />
-                <Text style={s.pendingByText}>Submitted by {nameOf(item.submittedBy)}</Text>
-              </View>
+              {row.note ? <Text style={s.note}>{row.note}</Text> : null}
 
-              {isMine ? (
-                <View style={s.blocked}>
-                  <Text style={s.blockedText}>
-                    You submitted this. Another director has to decide it — the database refuses a
-                    self-approval regardless of what this screen offers.
+              <View style={s.tally}>
+                <Tick
+                  done={row.sender_voted}
+                  label={`Sender — ${row.sender_name}`}
+                  you={iAmSender}
+                />
+                {row.principals > 1 ? (
+                  <Tick
+                    done={row.recipient_voted}
+                    label={`Recipient — ${row.recipient_name}`}
+                    you={iAmRecipient}
+                  />
+                ) : (
+                  <Text style={s.selfNote}>
+                    Recorded to himself, so an extra independent director is required in
+                    place of the second principal.
                   </Text>
+                )}
+                {row.independents_required > 0 ? (
+                  <Tick
+                    done={row.independent_votes >= row.independents_required}
+                    label={`Independent directors — ${row.independent_votes} of ${row.independents_required}`}
+                  />
+                ) : null}
+              </View>
+
+              {myDecision ? (
+                <Text style={s.voted}>
+                  You {myDecision === 'approved' ? 'approved' : 'rejected'} this. Waiting on
+                  the others.
+                </Text>
+              ) : !canVote ? null : rejecting === row.disbursement_id ? (
+                <View style={s.rejectBox}>
+                  <Field
+                    label="Why are you rejecting this?"
+                    value={reason}
+                    onChangeText={setReason}
+                    placeholder="Recorded against the wrong budget line"
+                    multiline
+                  />
+                  <View style={s.actions}>
+                    <Button
+                      label="Cancel"
+                      variant="ghost"
+                      onPress={() => {
+                        setRejecting(null);
+                        setReason('');
+                      }}
+                    />
+                    <Button
+                      label="Confirm rejection"
+                      variant="danger"
+                      disabled={reason.trim().length === 0}
+                      loading={cast.isPending}
+                      onPress={() => void submit(row, 'rejected')}
+                    />
+                  </View>
                 </View>
               ) : (
-                <View style={s.pendingActions}>
+                <View style={s.actions}>
                   <Button
                     label="Reject"
                     variant="ghost"
-                    onPress={() => {
-                      setRejecting(item);
-                      setReason('');
-                    }}
-                    style={s.flex}
+                    onPress={() => setRejecting(row.disbursement_id)}
                   />
                   <Button
                     label="Approve"
-                    onPress={() => approve(item)}
-                    loading={decide.isPending}
-                    disabled={!hasMfaSession}
-                    style={s.flex}
+                    loading={cast.isPending}
+                    onPress={() => void submit(row, 'approved')}
                   />
                 </View>
               )}
@@ -222,70 +232,83 @@ export default function Approvals() {
         })
       )}
 
-      <SectionTitle>Recent decisions</SectionTitle>
-
+      <SectionTitle note="Most recent first">Votes cast</SectionTitle>
       {(history.data ?? []).length === 0 ? (
-        <Empty title="No decisions yet" body="Approvals and rejections will be listed here." />
+        <Empty title="No votes yet" body="Decisions appear here as directors vote." />
       ) : (
-        <Card style={s.historyCard}>
-          {(history.data ?? []).map((a, i) => (
-            <View key={a.id} style={[s.historyRow, i > 0 && s.divided]}>
-              <View style={s.flex}>
-                <Text style={s.historyText}>
-                  {nameOf(a.approver_id)}{' '}
-                  <Text
-                    style={{
-                      color: a.decision === 'approved' ? color.positive : color.danger,
-                      fontWeight: '700',
-                    }}
-                  >
-                    {a.decision}
-                  </Text>{' '}
-                  an entry by {nameOf(a.submitted_by)}
+        <Card>
+          {(history.data ?? []).slice(0, 25).map((a) => (
+            <View key={a.id} style={s.histRow}>
+              <View style={s.rowMain}>
+                <Text style={s.histName}>{nameOf(a.approver_id)}</Text>
+                <Text style={s.meta}>
+                  {a.voter_role ?? 'director'} · {shortDate(a.decided_at)}
+                  {a.reason ? ` · ${a.reason}` : ''}
                 </Text>
-                {a.reason ? <Text style={s.historyReason}>“{a.reason}”</Text> : null}
-                <Text style={s.historyMeta}>{dateTime(a.decided_at)}</Text>
               </View>
+              <Pill
+                label={a.decision === 'approved' ? 'approved' : 'rejected'}
+                tone={a.decision === 'approved' ? 'positive' : 'danger'}
+              />
             </View>
           ))}
         </Card>
       )}
-
-      <View style={{ height: space.xxl }} />
     </ScrollView>
+  );
+}
+
+function Tick({ done, label, you }: { done: boolean; label: string; you?: boolean }) {
+  return (
+    <View style={s.tickRow}>
+      <Text style={[s.tick, { color: done ? color.positive : color.inkFaint }]}>
+        {done ? '✓' : '○'}
+      </Text>
+      <Text style={[s.tickLabel, done && s.tickDone]}>
+        {label}
+        {you ? ' (you)' : ''}
+      </Text>
+    </View>
   );
 }
 
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: color.canvas },
-  content: { padding: space.lg },
-  flex: { flex: 1 },
-
-  pendingCard: { marginBottom: space.md },
-  pendingHead: { flexDirection: 'row', gap: space.md, alignItems: 'flex-start' },
-  pendingLabel: { ...type.heading, color: color.ink },
-  pendingMeta: { ...type.caption, color: color.inkMuted, marginTop: 2 },
-  pendingBy: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: space.md },
-  pendingByText: { ...type.caption, color: color.inkMuted },
-  pendingActions: { flexDirection: 'row', gap: space.md, marginTop: space.lg },
-
-  blocked: {
-    marginTop: space.lg,
-    padding: space.md,
+  scroll: { padding: space.lg, paddingBottom: space.xxl * 2, gap: space.md },
+  title: { ...type.display, color: color.ink, marginBottom: space.xs },
+  voteCard: { gap: space.md },
+  head: { flexDirection: 'row', alignItems: 'flex-start', gap: space.md },
+  headMain: { flex: 1, gap: 2 },
+  meta: { ...type.caption, color: color.inkMuted },
+  note: {
+    ...type.caption,
+    color: color.inkMuted,
+    fontStyle: 'italic',
     backgroundColor: color.surfaceSunken,
+    padding: space.sm,
     borderRadius: radius.sm,
   },
-  blockedText: { ...type.caption, color: color.inkMuted, lineHeight: 17 },
-
-  rejectCard: { marginTop: space.lg, borderColor: color.danger },
-  rejectTitle: { ...type.heading, color: color.ink, marginBottom: space.lg },
-  reasonInput: { height: 90, paddingTop: space.md, textAlignVertical: 'top' },
-  rejectActions: { flexDirection: 'row', gap: space.md },
-
-  historyCard: { paddingVertical: space.sm },
-  historyRow: { paddingVertical: space.md },
-  divided: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.border },
-  historyText: { ...type.body, color: color.ink },
-  historyReason: { ...type.caption, color: color.inkMuted, marginTop: space.xs, fontStyle: 'italic' },
-  historyMeta: { ...type.caption, color: color.inkFaint, marginTop: space.xs },
+  tally: {
+    gap: space.xs,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: color.border,
+    paddingVertical: space.md,
+  },
+  tickRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  tick: { ...type.body, width: 16 },
+  tickLabel: { ...type.caption, color: color.inkMuted, flex: 1 },
+  tickDone: { color: color.ink },
+  selfNote: { ...type.caption, color: color.warning, marginLeft: 24 },
+  actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: space.sm },
+  rejectBox: { gap: space.sm },
+  voted: { ...type.caption, color: color.positive },
+  histRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    paddingVertical: space.sm,
+  },
+  rowMain: { flex: 1, gap: 2 },
+  histName: { ...type.body, color: color.ink },
 });
