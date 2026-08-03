@@ -1,0 +1,104 @@
+# Nightly encrypted database backup.
+#
+# The Supabase free tier has NO automated backups. These are the financial
+# records of two operating companies; losing them to a bad migration or a
+# deleted project is not an acceptable pilot risk, so this runs from day one
+# rather than being deferred to "before go-live".
+#
+# The dump is encrypted before it leaves the runner, so the backup store never
+# holds readable financial data. It is written OFF Supabase on purpose — a
+# backup living inside the thing it is backing up protects against nothing.
+#
+# Required repository secrets:
+#   SUPABASE_DB_URL   postgresql://postgres.<ref>:<password>@<pooler-host>:5432/postgres
+#                     Use the *session pooler* connection string from
+#                     Supabase → Project Settings → Database.
+#   BACKUP_PASSPHRASE  A long random passphrase. Store it somewhere OUTSIDE
+#                     GitHub as well — without it these backups are unreadable.
+#   BACKUP_REPO       owner/name of a PRIVATE repo to hold the dumps.
+#   BACKUP_REPO_TOKEN A PAT with contents:write on BACKUP_REPO.
+
+name: Database backup
+
+on:
+  schedule:
+    # 02:30 UTC = 07:30 PKT, after the working day, before the next one.
+    - cron: '30 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Install PostgreSQL 17 client
+        # The server is PG17. An older pg_dump refuses to dump it, so pin the
+        # client rather than relying on whatever the runner image ships.
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+            https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-client-17
+
+      - name: Dump, verify and encrypt
+        env:
+          PGPASSWORD_URL: ${{ secrets.SUPABASE_DB_URL }}
+          PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          STAMP="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
+          echo "STAMP=$STAMP" >> "$GITHUB_ENV"
+
+          pg_dump "$PGPASSWORD_URL" \
+            --format=custom \
+            --no-owner --no-privileges \
+            --file="zirconix-$STAMP.dump"
+
+          # A backup nobody has verified is a rumour. Fail loudly on an empty or
+          # truncated dump rather than quietly storing one.
+          SIZE=$(stat -c%s "zirconix-$STAMP.dump")
+          echo "Dump size: $SIZE bytes"
+          if [ "$SIZE" -lt 20000 ]; then
+            echo "::error::Dump is only $SIZE bytes — treating as a failed backup."
+            exit 1
+          fi
+          pg_restore --list "zirconix-$STAMP.dump" > /dev/null
+
+          gpg --batch --yes --symmetric --cipher-algo AES256 \
+            --passphrase "$PASSPHRASE" \
+            --output "zirconix-$STAMP.dump.gpg" \
+            "zirconix-$STAMP.dump"
+
+          rm -f "zirconix-$STAMP.dump"
+
+      - name: Store in the private backup repository
+        env:
+          TOKEN: ${{ secrets.BACKUP_REPO_TOKEN }}
+          REPO: ${{ secrets.BACKUP_REPO }}
+        run: |
+          set -euo pipefail
+          git clone --depth 1 "https://x-access-token:$TOKEN@github.com/$REPO.git" store
+          mkdir -p "store/$(date -u +%Y/%m)"
+          mv "zirconix-$STAMP.dump.gpg" "store/$(date -u +%Y/%m)/"
+          cd store
+          git config user.name  "zirconix-backup"
+          git config user.email "zirconix-backup@users.noreply.github.com"
+          git add -A
+          git commit -m "backup: $STAMP"
+          git push
+
+      - name: Keep a second copy as a workflow artifact
+        # Retained 90 days. Not a substitute for the repo copy — a shorter-lived
+        # fallback in case the backup repo itself is misconfigured.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zirconix-backup-${{ env.STAMP }}
+          path: '*.dump.gpg'
+          retention-days: 90
+          if-no-files-found: ignore

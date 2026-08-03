@@ -1,0 +1,54 @@
+# Keeps the free-tier Supabase project from auto-pausing.
+#
+# A free project pauses after 7 days with zero requests, and restoring it is
+# manual. During a 6-month pilot there will be quiet weeks — a holiday, a lull
+# between site visits — and a director opening the app to a dead backend is
+# exactly the kind of friction that kills a pilot.
+#
+# This also doubles as a liveness check: if the project is unreachable for a
+# reason other than pausing, the workflow fails and you find out from a GitHub
+# notification rather than from a director.
+#
+# Required repository secrets:
+#   SUPABASE_URL       https://<ref>.supabase.co
+#   SUPABASE_ANON_KEY  The publishable/anon key. Safe here — RLS still applies,
+#                      and the endpoint below reads nothing.
+
+name: Keep alive
+
+on:
+  schedule:
+    # Every third day at 06:00 UTC — comfortably inside the 7-day window.
+    - cron: '0 6 */3 * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Ping PostgREST
+        env:
+          URL: ${{ secrets.SUPABASE_URL }}
+          KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          set -euo pipefail
+
+          # entities is RLS-protected, so an anon caller gets an empty array.
+          # That is fine: the point is to make the database serve a request, not
+          # to read anything.
+          STATUS=$(curl -s -o /tmp/body -w '%{http_code}' \
+            -H "apikey: $KEY" \
+            -H "Authorization: Bearer $KEY" \
+            "$URL/rest/v1/entities?select=id&limit=1")
+
+          echo "HTTP $STATUS"
+          cat /tmp/body
+
+          # 200 (empty array) and 401/403 both prove the project is awake and
+          # serving. A 5xx or a connection failure does not.
+          case "$STATUS" in
+            200|401|403) echo "Project is awake." ;;
+            *) echo "::error::Unexpected status $STATUS from Supabase."; exit 1 ;;
+          esac
