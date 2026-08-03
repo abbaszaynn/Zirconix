@@ -5,6 +5,22 @@ import * as SecureStore from 'expo-secure-store';
 import { createClient, type SupportedStorage } from '@supabase/supabase-js';
 import { Platform } from 'react-native';
 
+if (Platform.OS === 'web' && typeof window === 'undefined') {
+  if (!(globalThis as any).WebSocket) {
+    (globalThis as any).WebSocket = class WebSocket {
+      constructor() {}
+      send() {}
+      close() {}
+    };
+  }
+}
+
+const DummyStorage = {
+  getItem: (key: string) => null,
+  setItem: (key: string, value: string) => {},
+  removeItem: (key: string) => {},
+};
+
 const url = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -68,7 +84,7 @@ const secureChunkedStorage: SupportedStorage = {
 
 export const supabase = createClient(url, anonKey, {
   auth: {
-    storage: Platform.OS === 'web' ? AsyncStorage : secureChunkedStorage,
+    storage: Platform.OS === 'web' ? (typeof window !== 'undefined' ? AsyncStorage : DummyStorage) : secureChunkedStorage,
     autoRefreshToken: true,
     persistSession: true,
     // No deep-link session handoff in this app; sign-in is email + password.

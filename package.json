@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@react-native-async-storage/async-storage": "^3.1.1",
+    "@expo/metro-runtime": "~57.0.8",
+    "@react-native-async-storage/async-storage": "2.2.0",
     "@supabase/supabase-js": "^2.109.0",
     "@tanstack/react-query": "^5.101.4",
     "expo": "~57.0.9",
@@ -28,6 +29,7 @@
     "expo-secure-store": "~57.0.1",
     "expo-sharing": "~57.0.8",
     "expo-status-bar": "~57.0.1",
+    "idb": "^8.0.3",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.2",
@@ -35,7 +37,9 @@
     "react-native-reanimated": "4.5.1",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.0",
-    "react-native-url-polyfill": "^4.0.0"
+    "react-native-url-polyfill": "^4.0.0",
+    "react-native-web": "^0.21.2",
+    "ws": "^8.21.1"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",

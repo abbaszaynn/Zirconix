@@ -123,6 +123,30 @@ access-control mistake, not a cosmetic one.
 Roles: `director` and `finance_officer` can write; `auditor` is read-only
 everywhere.
 
+### Creating a login
+
+Create the auth user from **Dashboard → Authentication → Add user**, or the
+Admin API. The `directors` row must already carry that email; the trigger links
+the two on insert.
+
+⚠️ **Do not create auth users with a raw `INSERT INTO auth.users`.** GoTrue reads
+`confirmation_token`, `recovery_token`, `email_change`, `phone_change`,
+`reauthentication_token` and their siblings into a non-nullable Go `string`. A
+hand-written insert leaves them `NULL`, and GoTrue then fails while *loading* the
+user — before it checks the password:
+
+```
+error finding user: sql: Scan error on column index 3,
+name "confirmation_token": converting NULL to string is unsupported
+```
+
+Sign-in returns **HTTP 500**, not "invalid credentials", so it looks like a wrong
+password and resetting the password does not help. The dashboard and Admin API
+write `''` for those columns and also create the matching `auth.identities` row.
+If you have already made this mistake, `coalesce` the token columns to `''` and
+insert the missing email identity — see `git show` on the commit that added this
+section.
+
 ---
 
 ## Free-tier constraints, and what was done about them

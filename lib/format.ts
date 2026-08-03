@@ -87,11 +87,14 @@ export const statusTone: Record<EntryStatus, StatusTone> = {
 export function humanError(error: unknown): string {
   if (!error) return 'Something went wrong.';
 
-  const e = error as { message?: string; code?: string; details?: string };
-  const raw = e.message ?? String(error);
+  const e = error as { message?: string; code?: string; details?: string; status?: number };
+  const raw = (e.message ?? '').trim();
 
   if (/Invalid login credentials/i.test(raw)) {
     return 'That email and password do not match.';
+  }
+  if (/Email not confirmed/i.test(raw)) {
+    return 'That address has not been confirmed yet.';
   }
   if (/Failed to fetch|Network request failed/i.test(raw)) {
     return 'No connection. Your entry has not been saved — try again when you have signal.';
@@ -99,5 +102,15 @@ export function humanError(error: unknown): string {
   if (e.code === '23505') {
     return 'That entry already exists.';
   }
+
+  // Supabase withholds the detail on a 5xx, and supabase-js then stringifies the
+  // empty body — so without this the banner reads a literal "{}". Show the status
+  // instead: it is the one piece of information worth passing on.
+  const opaque = raw === '' || raw === '{}' || raw === '[object Object]';
+  if (opaque || (typeof e.status === 'number' && e.status >= 500)) {
+    const status = typeof e.status === 'number' ? ` (HTTP ${e.status})` : '';
+    return `The server could not complete that${status}. This is not something you typed wrong — please report it.`;
+  }
+
   return raw.replace(/^ERROR:\s*/i, '');
 }
