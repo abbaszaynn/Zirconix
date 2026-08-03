@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native builds
+/ios
+/android
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+
+# Secrets — never commit
+.env
+.env.local
+.env.*.local
+
+# Local design/reference skill clones, not part of the app
+skills/
+
+# Supabase CLI local state
+supabase/.branches
+supabase/.temp
+.supabase/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+.idea/
+.vscode/
+
+# Database dumps produced locally
+*.dump
+*.sql.gz

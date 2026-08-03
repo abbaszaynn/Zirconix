@@ -1,0 +1,52 @@
+{
+  "expo": {
+    "name": "Zirconix",
+    "slug": "zirconix",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "zirconix",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#0F1B2A"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.zirconix.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Zirconix uses the camera so you can photograph a receipt at the point of purchase and attach it to an expenditure.",
+        "NSPhotoLibraryUsageDescription": "Zirconix needs photo library access so you can attach an existing receipt or payment confirmation to an expenditure."
+      }
+    },
+    "android": {
+      "package": "com.zirconix.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#0F1B2A"
+      },
+      "edgeToEdgeEnabled": true
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Zirconix needs photo library access so you can attach an existing receipt to an expenditure.",
+          "cameraPermission": "Zirconix uses the camera so you can photograph a receipt and attach it to an expenditure."
+        }
+      ],
+      "expo-sharing"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
