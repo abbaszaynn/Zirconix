@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { Pressable, Text } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StatusBar } from 'expo-status-bar';
@@ -28,14 +29,14 @@ function Gate() {
   useEffect(() => {
     if (loading) return;
 
-    const inAuthGroup = segments[0] === '(auth)';
+    const inAuthGroup = segments[0] === '(auth)' || segments[0] === 'sign-in' || segments[0] === 'mfa-challenge' || segments[0] === 'mfa-enroll';
 
     if (!session && !inAuthGroup) {
       router.replace('/(auth)/sign-in');
     } else if (session && inAuthGroup) {
       router.replace('/(tabs)/dashboard');
     }
-  }, [loading, session, director, segments, router]);
+  }, [loading, !!session, director, segments]);
 
   if (loading) return <Loading />;
 
@@ -46,6 +47,12 @@ function Gate() {
         headerTitleStyle: { color: color.ink, fontWeight: '700' },
         headerTintColor: color.accent,
         contentStyle: { backgroundColor: color.canvas },
+        headerLeft: ({ canGoBack }) =>
+          canGoBack ? (
+            <Pressable onPress={() => router.back()} style={{ marginRight: 16 }}>
+              <Text style={{ color: color.accent, fontSize: 16, fontWeight: '500' }}>Back</Text>
+            </Pressable>
+          ) : undefined,
       }}
     >
       <Stack.Screen name="(auth)" options={{ headerShown: false }} />

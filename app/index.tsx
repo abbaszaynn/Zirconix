@@ -1,5 +1,5 @@
-import { Loading } from '../components/ui';
+import { Redirect } from 'expo-router';
 
 export default function Index() {
-  return <Loading />;
+  return <Redirect href="/(auth)/sign-in" />;
 }
