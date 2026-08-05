@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Image,
@@ -62,6 +62,12 @@ export default function NewExpenditure() {
   const canSubmit =
     !!disbursementId && amountValid && !!category && !!payee.trim() && !!receipt && !preparing;
 
+  useEffect(() => {
+    if (!disbursementId && advances.data && advances.data.length > 0) {
+      setDisbursementId(advances.data[0].disbursement_id);
+    }
+  }, [advances.data, disbursementId]);
+
   async function pickReceipt(source: 'camera' | 'library') {
     setError(null);
     try {
@@ -99,27 +105,46 @@ export default function NewExpenditure() {
     }
   }
 
-  /**
-   * A PDF invoice is attached as-is — no compression, because the point of a PDF
-   * receipt is that it stays the document the supplier issued.
-   */
-  async function pickPdf() {
+  async function pickFiles() {
     setError(null);
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: 'application/pdf',
+        type: ['image/jpeg', 'image/png', 'application/pdf'],
         copyToCacheDirectory: true,
       });
       if (result.canceled || !result.assets?.[0]) return;
 
       const asset = result.assets[0];
       setPreparing(true);
-      setReceipt(await preparePdf(asset.uri, asset.size ?? undefined));
+      if (asset.mimeType === 'application/pdf' || asset.name?.toLowerCase().endsWith('.pdf')) {
+        setReceipt(await preparePdf(asset.uri, asset.size ?? undefined));
+      } else {
+        const prepared = await compressImage(asset.uri, 'payment_confirmation');
+        setReceipt(prepared);
+      }
     } catch (e) {
       setError(humanError(e));
     } finally {
       setPreparing(false);
     }
+  }
+
+  function promptUpload() {
+    if (Platform.OS === 'web') {
+      const wantCamera = window.confirm('Use Camera? (Click Cancel to choose files)');
+      if (wantCamera) {
+        pickReceipt('camera');
+      } else {
+        pickFiles();
+      }
+      return;
+    }
+
+    Alert.alert('Uploads', 'Choose a source for your receipt', [
+      { text: 'Camera', onPress: () => pickReceipt('camera') },
+      { text: 'Files', onPress: () => pickFiles() },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
   }
 
   async function submit() {
@@ -263,23 +288,9 @@ export default function NewExpenditure() {
               </Text>
               <View style={s.receiptButtons}>
                 <Button
-                  label="Photograph"
+                  label="Uploads"
                   variant="secondary"
-                  onPress={() => void pickReceipt('camera')}
-                  loading={preparing}
-                  style={s.flex}
-                />
-                <Button
-                  label="Photo"
-                  variant="secondary"
-                  onPress={() => void pickReceipt('library')}
-                  loading={preparing}
-                  style={s.flex}
-                />
-                <Button
-                  label="PDF"
-                  variant="secondary"
-                  onPress={() => void pickPdf()}
+                  onPress={promptUpload}
                   loading={preparing}
                   style={s.flex}
                 />

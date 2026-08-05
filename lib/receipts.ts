@@ -1,5 +1,6 @@
 import * as ImageManipulator from 'expo-image-manipulator';
 import { File } from 'expo-file-system';
+import { Platform } from 'react-native';
 
 import { supabase } from './supabase';
 
@@ -38,10 +39,19 @@ export async function compressImage(
     format: ImageManipulator.SaveFormat.JPEG,
   });
 
+  let byteSize = 0;
+  if (Platform.OS === 'web') {
+    const res = await fetch(result.uri);
+    const blob = await res.blob();
+    byteSize = blob.size;
+  } else {
+    byteSize = new File(result.uri).size ?? 0;
+  }
+
   return {
     uri: result.uri,
     mimeType: 'image/jpeg',
-    byteSize: new File(result.uri).size ?? 0,
+    byteSize,
     kind,
   };
 }
@@ -58,7 +68,16 @@ export async function compressImage(
 const MAX_PDF_BYTES = 5 * 1024 * 1024;
 
 export async function preparePdf(uri: string, sizeHint?: number): Promise<PreparedReceipt> {
-  const byteSize = sizeHint ?? new File(uri).size ?? 0;
+  let byteSize = sizeHint ?? 0;
+  if (!byteSize) {
+    if (Platform.OS === 'web') {
+      const res = await fetch(uri);
+      const blob = await res.blob();
+      byteSize = blob.size;
+    } else {
+      byteSize = new File(uri).size ?? 0;
+    }
+  }
 
   if (byteSize > MAX_PDF_BYTES) {
     throw new Error(
@@ -90,7 +109,13 @@ export async function uploadReceipt(
   // Read the bytes directly. Passing a file:// URI to fetch and then to Storage
   // is unreliable on Android; expo-file-system's File implements Blob, so this
   // hands Storage a real buffer.
-  const bytes = await new File(receipt.uri).arrayBuffer();
+  let bytes: ArrayBuffer;
+  if (Platform.OS === 'web') {
+    const res = await fetch(receipt.uri);
+    bytes = await res.arrayBuffer();
+  } else {
+    bytes = await new File(receipt.uri).arrayBuffer();
+  }
 
   const { error } = await supabase.storage.from('receipts').upload(path, bytes, {
     contentType: receipt.mimeType,

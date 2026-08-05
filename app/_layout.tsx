@@ -47,12 +47,20 @@ function Gate() {
         headerTitleStyle: { color: color.ink, fontWeight: '700' },
         headerTintColor: color.accent,
         contentStyle: { backgroundColor: color.canvas },
-        headerLeft: ({ canGoBack }) =>
-          canGoBack ? (
-            <Pressable onPress={() => router.back()} style={{ marginRight: 16 }}>
-              <Text style={{ color: color.accent, fontSize: 16, fontWeight: '500' }}>Back</Text>
-            </Pressable>
-          ) : undefined,
+        headerLeft: () => (
+          <Pressable
+            onPress={() => {
+              if (router.canGoBack()) {
+                router.back();
+              } else {
+                router.replace('/');
+              }
+            }}
+            style={{ marginRight: 16 }}
+          >
+            <Text style={{ color: color.accent, fontSize: 16, fontWeight: '500' }}>Back</Text>
+          </Pressable>
+        ),
       }}
     >
       <Stack.Screen name="(auth)" options={{ headerShown: false }} />
