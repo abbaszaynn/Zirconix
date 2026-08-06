@@ -65,6 +65,7 @@ function Gate() {
     >
       <Stack.Screen name="(auth)" options={{ headerShown: false }} />
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+      <Stack.Screen name="profile" options={{ title: 'Profile', presentation: 'modal' }} />
       <Stack.Screen
         name="disbursement/new"
         options={{ title: 'Record a disbursement', presentation: 'modal' }}

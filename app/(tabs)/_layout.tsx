@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
-import { Tabs } from 'expo-router';
-import { Text } from 'react-native';
+import { Tabs, useRouter } from 'expo-router';
+import { Text, Pressable } from 'react-native';
 
 import { useRealtimeSync, useTransferVotes } from '../../lib/queries';
 import { useSession } from '../../lib/session';
@@ -18,6 +18,7 @@ function Glyph({ char, focused }: { char: string; focused: boolean }) {
 export default function TabsLayout() {
   const { activeEntity, director } = useSession();
   const { data: pending } = useTransferVotes(activeEntity?.id, true);
+  const router = useRouter();
 
   // Every director's screens follow the database, so a transfer recorded on one
   // phone updates the badge and the dashboard on the other seven without anyone
@@ -40,6 +41,14 @@ export default function TabsLayout() {
         tabBarStyle: { backgroundColor: color.surface, borderTopColor: color.border },
         tabBarLabelStyle: { ...type.micro, letterSpacing: 0 },
         sceneStyle: { backgroundColor: color.canvas },
+        headerRight: () => (
+          <Pressable
+            onPress={() => router.push('/profile')}
+            style={{ marginRight: 16, padding: 8 }}
+          >
+            <Text style={{ fontSize: 18 }}>👤</Text>
+          </Pressable>
+        ),
       }}
     >
       <Tabs.Screen

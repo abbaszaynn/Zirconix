@@ -118,7 +118,7 @@ export default function Approvals() {
         />
       ) : null}
 
-      <SectionTitle note="Sender and recipient below 10 lac; two more directors above it">
+      <SectionTitle note="4 votes required (sender, recipient, and two independent directors)">
         Awaiting a vote
       </SectionTitle>
 

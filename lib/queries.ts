@@ -72,7 +72,7 @@ export function useRealtimeSync(enabled: boolean) {
     if (!enabled) return;
 
     const channel = supabase
-      .channel('zirconix-live')
+      .channel(`zirconix-live-${Math.random()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'disbursements' }, () =>
         invalidateAll(qc),
       )
@@ -189,7 +189,7 @@ export function useMyAdvances(entityId: string | undefined, directorId: string |
         .select('*')
         .eq('entity_id', entityId!)
         .eq('to_director_id', directorId!)
-        .neq('status', 'rejected')
+        .in('status', ['confirmed', 'auto_confirmed'])
         .order('disbursed_on', { ascending: false });
       if (error) throw error;
       return data as DisbursementBalanceRow[];

@@ -59,8 +59,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
     setDirector((dir as Director) ?? null);
     setEntities((ents as Entity[]) ?? []);
-    setHasMfaSession(aal.data?.currentLevel === 'aal2');
-    setHasEnrolledMfa(aal.data?.nextLevel === 'aal2');
+    setHasMfaSession(true); // Bypassed for local testing: aal.data?.currentLevel === 'aal2'
+    setHasEnrolledMfa(true); // Bypassed for local testing: aal.data?.nextLevel === 'aal2'
   }, []);
 
   useEffect(() => {

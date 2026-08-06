@@ -96,7 +96,7 @@ export default function MfaEnroll() {
       <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
         <Text style={s.title}>Set up your authenticator</Text>
         <Text style={s.body}>
-          Approving an entry of PKR 10 lac or more requires two-step verification. Add this key to
+          Approving an entry requires two-step verification. Add this key to
           Google Authenticator, Microsoft Authenticator, or 1Password, then enter the code it shows.
         </Text>
 
