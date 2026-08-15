@@ -99,37 +99,33 @@ insert into public.entities (name, legal_name) values
 on conflict (name) do nothing;
 
 insert into public.directors (full_name, email, role) values
-  ('Abbas Zayn',            'abbaszayn827@gmail.com',   'director'),
-  ('Director 2 (placeholder)', 'director2@example.invalid', 'director'),
-  ('Director 3 (placeholder)', 'director3@example.invalid', 'director'),
-  ('Director 4 (placeholder)', 'director4@example.invalid', 'director'),
-  ('Director 5 (placeholder)', 'director5@example.invalid', 'director'),
-  ('Director 6 (placeholder)', 'director6@example.invalid', 'director'),
-  ('Finance Officer (placeholder)', 'finance@example.invalid', 'finance_officer'),
-  ('Auditor (placeholder)',   'auditor@example.invalid',  'auditor')
-on conflict (email) do nothing;
+  ('Zain Abbas',            'abbaszayn827@gmail.com',       'finance_officer'),
+  ('Mines Zircon',          'mineszircon@gmail.com',        'director'),
+  ('Daniyal Ali',           'daniyalalidkh121@gmail.com',   'director'),
+  ('Syed Moaiz Ali',        'moaizalishah@gmail.com',       'director'),
+  ('Minhas Hussain',        'ravian0479@gmail.com',         'director'),
+  ('Zubair Abbas',          'Zubairqasimi300@gmail.com',    'director'),
+  ('Sabi-ul-Hassan',        'Zaynm6337@gmail.com',          'director'),
+  ('Tabish Hassan',         'tabishmir121472@gmail.com',    'director')
+on conflict (email) do update 
+  set full_name = excluded.full_name, 
+      role = excluded.role;
 
--- Seat 1 and the finance officer / auditor sit on both boards; the rest are split
--- between the two companies. Adjust to the real board composition.
+-- Assign all directors and officers to both boards.
 insert into public.director_entities (director_id, entity_id)
 select d.id, e.id
 from public.directors d
 cross join public.entities e
-where d.email in ('abbaszayn827@gmail.com', 'finance@example.invalid', 'auditor@example.invalid')
-on conflict do nothing;
-
-insert into public.director_entities (director_id, entity_id)
-select d.id, e.id
-from public.directors d
-join public.entities e on e.name = 'Durr Mines'
-where d.email in ('director2@example.invalid', 'director3@example.invalid', 'director4@example.invalid')
-on conflict do nothing;
-
-insert into public.director_entities (director_id, entity_id)
-select d.id, e.id
-from public.directors d
-join public.entities e on e.name = 'Zircon Mines'
-where d.email in ('director4@example.invalid', 'director5@example.invalid', 'director6@example.invalid')
+where d.email in (
+  'abbaszayn827@gmail.com',
+  'mineszircon@gmail.com',
+  'daniyalalidkh121@gmail.com',
+  'moaizalishah@gmail.com',
+  'ravian0479@gmail.com',
+  'Zubairqasimi300@gmail.com',
+  'Zaynm6337@gmail.com',
+  'tabishmir121472@gmail.com'
+)
 on conflict do nothing;
 
 -- Zircon Mines — Shigar Valley Exploration — Q3 2026 — PKR 8,000,000

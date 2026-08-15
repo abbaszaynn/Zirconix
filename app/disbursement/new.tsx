@@ -27,7 +27,19 @@ const THRESHOLD = 1000000;
 
 export default function NewDisbursement() {
   const router = useRouter();
-  const { activeEntity } = useSession();
+  const { activeEntity, director } = useSession();
+
+  if (director && director.role !== 'finance_officer') {
+    return (
+      <View style={{ flex: 1, padding: 24, justifyContent: 'center' }}>
+        <Empty 
+          title="Access restricted" 
+          body="Only the finance director can initiate and record new disbursements." 
+        />
+        <Button label="Go back" onPress={() => router.back()} style={{ marginTop: 24 }} />
+      </View>
+    );
+  }
 
   const { data: periods } = usePeriods(activeEntity?.id);
   const period = periods?.[0];

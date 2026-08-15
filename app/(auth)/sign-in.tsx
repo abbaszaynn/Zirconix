@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -34,6 +34,29 @@ export default function SignIn() {
       }
 
       router.replace('/(tabs)/dashboard');
+    } catch (e) {
+      setError(humanError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resetPassword() {
+    if (!email.trim()) {
+      setError('Please enter your email address first.');
+      return;
+    }
+    setError(null);
+    setBusy(true);
+    try {
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(
+        email.trim().toLowerCase(),
+        {
+          redirectTo: 'zirconix://reset-password',
+        },
+      );
+      if (resetError) throw resetError;
+      Alert.alert('Reset link sent', 'Check your email for a link to reset your password.');
     } catch (e) {
       setError(humanError(e));
     } finally {
@@ -85,6 +108,14 @@ export default function SignIn() {
             onPress={submit}
             loading={busy}
             disabled={!email.trim() || !password}
+          />
+
+          <Button
+            label="Forgot password?"
+            variant="ghost"
+            onPress={resetPassword}
+            disabled={busy}
+            style={{ marginTop: 8 }}
           />
 
           <Text style={s.footnote}>

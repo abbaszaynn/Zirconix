@@ -122,12 +122,14 @@ export default function Dashboard() {
       </Card>
 
       <View style={s.actions}>
-        <Button
-          label="Record disbursement"
-          variant="secondary"
-          onPress={() => router.push('/disbursement/new')}
-          style={s.actionBtn}
-        />
+        {director?.role === 'finance_officer' && (
+          <Button
+            label="Record disbursement"
+            variant="secondary"
+            onPress={() => router.push('/disbursement/new')}
+            style={s.actionBtn}
+          />
+        )}
         <Button
           label="Log expenditure"
           onPress={() => router.push('/expenditure/new')}

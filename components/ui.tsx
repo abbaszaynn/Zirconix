@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -141,14 +141,27 @@ export function Field({
   error,
   ...props
 }: TextInputProps & { label: string; hint?: string; error?: string }) {
+  const [isSecure, setIsSecure] = useState(props.secureTextEntry);
   return (
     <View style={s.field}>
       <Text style={s.fieldLabel}>{label}</Text>
-      <TextInput
-        placeholderTextColor={color.inkFaint}
-        {...props}
-        style={[s.input, !!error && s.inputError, props.style]}
-      />
+      <View style={{ justifyContent: 'center' }}>
+        <TextInput
+          placeholderTextColor={color.inkFaint}
+          {...props}
+          secureTextEntry={isSecure}
+          style={[s.input, !!error && s.inputError, props.style, props.secureTextEntry ? { paddingRight: 40 } : undefined]}
+        />
+        {props.secureTextEntry && (
+          <Pressable 
+            onPress={() => setIsSecure(!isSecure)} 
+            style={{ position: 'absolute', right: space.md, zIndex: 10 }}
+            hitSlop={15}
+          >
+            <Text style={{ fontSize: 18, opacity: 0.6 }}>{isSecure ? '👁' : '🙈'}</Text>
+          </Pressable>
+        )}
+      </View>
       {error ? (
         <Text style={s.fieldError}>{error}</Text>
       ) : hint ? (

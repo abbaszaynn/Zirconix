@@ -104,7 +104,7 @@ export function useDirectors() {
   return useQuery({
     queryKey: qk.directors(),
     queryFn: async (): Promise<Director[]> => {
-      const { data, error } = await supabase.from('directors').select('*').order('full_name');
+      const { data, error } = await supabase.from('directors').select('*').eq('is_active', true).order('full_name');
       if (error) throw error;
       return data as Director[];
     },
