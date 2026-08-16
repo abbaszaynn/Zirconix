@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
-import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Link, useRouter } from 'expo-router';
 
 import {
   useAccountability,
@@ -259,29 +259,37 @@ export default function Dashboard() {
             const isMe = a.director_id === director?.id;
 
             return (
-              <View key={a.director_id} style={[s.accRow, i > 0 && s.catRowDivided]}>
-                <View style={s.accMain}>
-                  <Text style={s.accName}>
-                    {nameOf(a.director_id)}
-                    {isMe ? <Text style={s.you}>  YOU</Text> : null}
-                  </Text>
-                  <Text style={s.accMeta}>
-                    {money(a.total_accounted)} accounted of {money(a.total_disbursed)} ·{' '}
-                    {a.advance_count} advance{Number(a.advance_count) === 1 ? '' : 's'}
-                  </Text>
-                </View>
-                <View style={s.accRight}>
-                  <Money
-                    amount={outstanding}
-                    tone={outstanding > 0 ? 'warning' : 'positive'}
-                    size="large"
-                  />
-                  <Pill
-                    label={outstanding > 0 ? 'outstanding' : 'clear'}
-                    tone={outstanding > 0 ? 'warning' : 'positive'}
-                  />
-                </View>
-              </View>
+              <Link
+                key={a.director_id}
+                href={{ pathname: '/director/[id]', params: { id: a.director_id } }}
+                asChild
+              >
+                <Pressable>
+                  <View style={[s.accRow, i > 0 && s.catRowDivided]}>
+                    <View style={s.accMain}>
+                      <Text style={s.accName}>
+                        {nameOf(a.director_id)}
+                        {isMe ? <Text style={s.you}>  YOU</Text> : null}
+                      </Text>
+                      <Text style={s.accMeta}>
+                        {money(a.total_accounted)} accounted of {money(a.total_disbursed)} ·{' '}
+                        {a.advance_count} advance{Number(a.advance_count) === 1 ? '' : 's'}
+                      </Text>
+                    </View>
+                    <View style={s.accRight}>
+                      <Money
+                        amount={outstanding}
+                        tone={outstanding > 0 ? 'warning' : 'positive'}
+                        size="large"
+                      />
+                      <Pill
+                        label={outstanding > 0 ? 'outstanding' : 'clear'}
+                        tone={outstanding > 0 ? 'warning' : 'positive'}
+                      />
+                    </View>
+                  </View>
+                </Pressable>
+              </Link>
             );
           })}
         </Card>
