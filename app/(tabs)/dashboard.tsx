@@ -106,19 +106,15 @@ export default function Dashboard() {
         </View>
       ) : null}
 
-      {/* Headline: showing total injected funds. */}
+      {/* Headline: showing available balance. */}
       <Card style={s.hero}>
-        <Text style={s.heroLabel}>TOTAL FUND</Text>
-        <Money amount={totalFund} size="display" />
+        <Text style={s.heroLabel}>AVAILABLE BALANCE</Text>
+        <Money amount={totalFund - totals.disbursed} size="display" align="left" />
 
         <View style={s.heroGrid}>
+          <Stat label="Total Fund" amount={totalFund} />
           <Stat label="Disbursed" amount={totals.disbursed} />
           <Stat label="Spent" amount={totals.spent} />
-          <Stat
-            label="Left (Available)"
-            amount={totalFund - totals.disbursed}
-            tone="positive"
-          />
         </View>
 
         <Text style={s.heroNote}>
@@ -308,7 +304,7 @@ function Stat({
   return (
     <View style={s.stat}>
       <Text style={s.statLabel}>{label.toUpperCase()}</Text>
-      <Money amount={amount} tone={tone ?? 'neutral'} size="body" />
+      <Money amount={amount} tone={tone ?? 'neutral'} size="body" align="left" />
     </View>
   );
 }

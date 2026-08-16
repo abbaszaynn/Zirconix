@@ -41,10 +41,12 @@ export function Money({
   amount,
   tone = 'neutral',
   size = 'body',
+  align = 'right',
 }: {
   amount: number | null | undefined;
   tone?: StatusTone;
   size?: 'body' | 'large' | 'display';
+  align?: 'left' | 'right' | 'center';
 }) {
   const toneColor =
     tone === 'positive'
@@ -61,7 +63,7 @@ export function Money({
         s.money,
         size === 'large' && s.moneyLarge,
         size === 'display' && s.moneyDisplay,
-        { color: toneColor },
+        { color: toneColor, textAlign: align },
       ]}
       numberOfLines={1}
     >
