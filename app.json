@@ -19,7 +19,8 @@
       "bundleIdentifier": "com.zirconix.app",
       "infoPlist": {
         "NSCameraUsageDescription": "Zirconix uses the camera so you can photograph a receipt at the point of purchase and attach it to an expenditure.",
-        "NSPhotoLibraryUsageDescription": "Zirconix needs photo library access so you can attach an existing receipt or payment confirmation to an expenditure."
+        "NSPhotoLibraryUsageDescription": "Zirconix needs photo library access so you can attach an existing receipt or payment confirmation to an expenditure.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -27,7 +28,10 @@
       "adaptiveIcon": {
         "backgroundColor": "#0F1B2A"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -47,6 +51,12 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "acd330ca-b07d-4932-b77f-47d81f5768e2"
+      }
     }
   }
 }
