@@ -49,10 +49,15 @@ export default function SignIn() {
     setError(null);
     setBusy(true);
     try {
+      const redirectUrl =
+        Platform.OS === 'web'
+          ? `${window.location.origin}/reset-password`
+          : 'zirconix://reset-password';
+
       const { error: resetError } = await supabase.auth.resetPasswordForEmail(
         email.trim().toLowerCase(),
         {
-          redirectTo: 'zirconix://reset-password',
+          redirectTo: redirectUrl,
         },
       );
       if (resetError) throw resetError;
