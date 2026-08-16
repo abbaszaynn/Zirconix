@@ -16,6 +16,8 @@ import type {
   DisbursementMethod,
   Notification,
   TransferVoteRow,
+  AccountDeposit,
+  DepositSource,
 } from './database.types';
 
 export const qk = {
@@ -47,6 +49,7 @@ const LIVE_ROOTS = [
   'notifications',
   'audit',
   'chain',
+  'deposits',
 ] as const;
 
 function invalidateAll(qc: ReturnType<typeof useQueryClient>) {
@@ -83,6 +86,9 @@ export function useRealtimeSync(enabled: boolean) {
         invalidateAll(qc),
       )
       .on('postgres_changes', { event: '*', schema: 'public', table: 'budget_lines' }, () =>
+        invalidateAll(qc),
+      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'account_deposits' }, () =>
         invalidateAll(qc),
       )
       .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, () =>
@@ -493,6 +499,68 @@ export function useMarkNotificationsRead() {
         .in('id', ids);
       if (error) throw error;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['notifications'] }),
+  });
+}
+
+export type AccountDepositRow = AccountDeposit & {
+  accounts: { name: string } | null;
+  directors: { full_name: string } | null;
+  recorded_by_director: { full_name: string } | null;
+};
+
+export function useDeposits(entityId: string | undefined) {
+  return useQuery({
+    queryKey: ['deposits', entityId ?? ''],
+    enabled: !!entityId,
+    queryFn: async (): Promise<AccountDepositRow[]> => {
+      const { data, error } = await supabase
+        .from('account_deposits')
+        .select(`
+          *,
+          accounts ( name ),
+          directors!account_deposits_source_director_id_fkey ( full_name ),
+          recorded_by_director:directors!account_deposits_recorded_by_fkey ( full_name )
+        `)
+        .eq('entity_id', entityId!)
+        .order('deposit_date', { ascending: false });
+      if (error) throw error;
+      return data as unknown as AccountDepositRow[];
+    },
+  });
+}
+
+export type NewDeposit = {
+  entityId: string;
+  toAccountId: string;
+  amount: number;
+  sourceType: DepositSource;
+  sourceDirectorId?: string | null;
+  sourceInvestorName?: string | null;
+  depositDate: string;
+  recordedBy: string;
+};
+
+export function useCreateDeposit() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: NewDeposit): Promise<AccountDeposit> => {
+      const { data, error } = await supabase
+        .from('account_deposits')
+        .insert({
+          entity_id: input.entityId,
+          to_account_id: input.toAccountId,
+          amount: input.amount,
+          source_type: input.sourceType,
+          source_director_id: input.sourceDirectorId ?? null,
+          source_investor_name: input.sourceInvestorName ?? null,
+          deposit_date: input.depositDate,
+          recorded_by: input.recordedBy,
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      return data as AccountDeposit;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['deposits'] }),
   });
 }

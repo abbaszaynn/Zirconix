@@ -7,6 +7,7 @@ import {
   useBudgetSummary,
   useDirectors,
   usePeriods,
+  useDeposits,
 } from '../../lib/queries';
 import { useSession } from '../../lib/session';
 import { money, lakhCrore } from '../../lib/format';
@@ -23,6 +24,7 @@ export default function Dashboard() {
 
   const budget = useBudgetSummary(activeEntity?.id, effectivePeriod);
   const accountability = useAccountability(activeEntity?.id);
+  const deposits = useDeposits(activeEntity?.id);
   const { data: directors } = useDirectors();
 
   const totals = useMemo(() => {
@@ -38,10 +40,14 @@ export default function Dashboard() {
     );
   }, [budget.data]);
 
+  const totalFund = useMemo(() => {
+    return (deposits.data ?? []).reduce((acc, d) => acc + Number(d.amount), 0);
+  }, [deposits.data]);
+
   const nameOf = (id: string) =>
     directors?.find((d) => d.id === id)?.full_name ?? 'Unknown director';
 
-  const refreshing = budget.isFetching || accountability.isFetching;
+  const refreshing = budget.isFetching || accountability.isFetching || deposits.isFetching;
 
   if (!activeEntity) {
     return (
@@ -62,6 +68,7 @@ export default function Dashboard() {
           onRefresh={() => {
             void budget.refetch();
             void accountability.refetch();
+            void deposits.refetch();
           }}
         />
       }
@@ -99,18 +106,18 @@ export default function Dashboard() {
         </View>
       ) : null}
 
-      {/* Headline: the four numbers the imprest model turns on. */}
+      {/* Headline: showing total injected funds. */}
       <Card style={s.hero}>
-        <Text style={s.heroLabel}>ALLOCATED · {effectivePeriod ?? '—'}</Text>
-        <Money amount={totals.allocated} size="display" />
+        <Text style={s.heroLabel}>TOTAL FUND</Text>
+        <Money amount={totalFund} size="display" />
 
         <View style={s.heroGrid}>
           <Stat label="Disbursed" amount={totals.disbursed} />
           <Stat label="Spent" amount={totals.spent} />
           <Stat
-            label="Unaccounted"
-            amount={totals.unaccounted}
-            tone={totals.unaccounted > 0 ? 'warning' : 'positive'}
+            label="Left (Available)"
+            amount={totalFund - totals.disbursed}
+            tone="positive"
           />
         </View>
 
@@ -123,12 +130,20 @@ export default function Dashboard() {
 
       <View style={s.actions}>
         {director?.role === 'finance_officer' && (
-          <Button
-            label="Record disbursement"
-            variant="secondary"
-            onPress={() => router.push('/disbursement/new')}
-            style={s.actionBtn}
-          />
+          <>
+            <Button
+              label="Record incoming funds"
+              variant="secondary"
+              onPress={() => router.push('/deposit/new')}
+              style={s.actionBtn}
+            />
+            <Button
+              label="Record disbursement"
+              variant="secondary"
+              onPress={() => router.push('/disbursement/new')}
+              style={s.actionBtn}
+            />
+          </>
         )}
         <Button
           label="Log expenditure"
@@ -136,6 +151,44 @@ export default function Dashboard() {
           style={s.actionBtn}
         />
       </View>
+
+
+      <SectionTitle note="Recent capital injections into the company accounts">
+        Incoming Funds
+      </SectionTitle>
+
+      {deposits.isLoading ? (
+        <Loading />
+      ) : (deposits.data ?? []).length === 0 ? (
+        <Empty
+          title="No incoming funds"
+          body="No capital injections have been recorded yet."
+        />
+      ) : (
+        <Card style={s.tableCard}>
+          {(deposits.data ?? []).map((d, i) => {
+            const sourceName =
+              d.source_type === 'director'
+                ? d.directors?.full_name ?? 'Unknown director'
+                : d.source_investor_name ?? 'Unknown investor';
+
+            return (
+              <View key={d.id} style={[s.accRow, i > 0 && s.catRowDivided]}>
+                <View style={s.accMain}>
+                  <Text style={s.accName}>{sourceName}</Text>
+                  <Text style={s.accMeta}>
+                    to {d.accounts?.name ?? 'Account'} · {d.deposit_date}
+                  </Text>
+                </View>
+                <View style={s.accRight}>
+                  <Money amount={d.amount} tone="positive" size="large" />
+                  <Pill label={d.source_type} tone="neutral" />
+                </View>
+              </View>
+            );
+          })}
+        </Card>
+      )}
 
       <SectionTitle note="Allocated against spent, per category">By category</SectionTitle>
 

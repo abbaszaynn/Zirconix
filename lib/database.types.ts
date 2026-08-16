@@ -36,6 +36,7 @@ export type AttachmentKind =
   | 'receipt_pdf'
   | 'payment_confirmation'
   | 'transfer_proof';
+export type DepositSource = 'director' | 'investor';
 
 export interface Entity {
   id: string;
@@ -68,6 +69,19 @@ export interface Account {
   /** Masked tail only, e.g. 'HBL ****4471'. */
   bank_label: string | null;
   is_active: boolean;
+  created_at: string;
+}
+
+export interface AccountDeposit {
+  id: string;
+  entity_id: string;
+  to_account_id: string;
+  amount: number;
+  source_type: DepositSource;
+  source_director_id: string | null;
+  source_investor_name: string | null;
+  recorded_by: string;
+  deposit_date: string;
   created_at: string;
 }
 
