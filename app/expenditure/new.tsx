@@ -49,6 +49,7 @@ export default function NewExpenditure() {
   const [receipt, setReceipt] = useState<PreparedReceipt | null>(null);
   const [preparing, setPreparing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
   const selected = useMemo(
     () => (advances.data ?? []).find((a) => a.disbursement_id === disbursementId) ?? null,
@@ -167,14 +168,23 @@ export default function NewExpenditure() {
         attachments: [uploaded],
       });
 
-      Alert.alert(
-        'Recorded',
+      setSuccess(
         `${money(numericAmount)} to ${payee.trim()} has been recorded with its receipt. ` +
-          'The other directors have been notified.',
-        [{ text: 'Done', onPress: () => router.back() }],
+          'The other directors have been notified.'
       );
+      
+      setAmount('');
+      setCategory(null);
+      setPayee('');
+      setNote('');
+      setReceipt(null);
+      setDisbursementId(null);
+      setError(null);
+
+      setTimeout(() => setSuccess(null), 8000);
     } catch (e) {
       setError(humanError(e));
+      setSuccess(null);
     }
   }
 
@@ -199,6 +209,7 @@ export default function NewExpenditure() {
     >
       <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
         {error ? <Banner tone="danger" title="Not saved" body={error} /> : null}
+        {success ? <Banner tone="positive" title="Recorded" body={success} /> : null}
 
         <Text style={s.groupLabel}>CHARGE TO WHICH ADVANCE</Text>
         {(advances.data ?? []).map((a) => {

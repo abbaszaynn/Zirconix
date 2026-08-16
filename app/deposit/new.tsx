@@ -45,6 +45,7 @@ export default function NewDeposit() {
   const [sourceDirectorId, setSourceDirectorId] = useState<string | null>(null);
   const [sourceInvestorName, setSourceInvestorName] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
   const numericAmount = Number(amount.replace(/,/g, ''));
   const amountValid = Number.isFinite(numericAmount) && numericAmount > 0;
@@ -70,13 +71,17 @@ export default function NewDeposit() {
         recordedBy: director.id,
       });
 
-      Alert.alert(
-        'Funds Recorded',
-        `${money(numericAmount)} has been added to the account balance.`,
-        [{ text: 'Done', onPress: () => router.back() }],
-      );
+      setSuccess(`${money(numericAmount)} has been added to the account balance.`);
+      setAmount('');
+      setSourceInvestorName('');
+      setSourceDirectorId(null);
+      setError(null);
+      
+      // Auto-hide success after 5 seconds
+      setTimeout(() => setSuccess(null), 5000);
     } catch (e) {
       setError(humanError(e));
+      setSuccess(null);
     }
   }
 
@@ -96,6 +101,7 @@ export default function NewDeposit() {
         />
 
         {error ? <Banner tone="danger" title="Not saved" body={error} /> : null}
+        {success ? <Banner tone="positive" title="Success" body={success} /> : null}
 
         <View style={{ height: space.xl }} />
 
