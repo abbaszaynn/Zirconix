@@ -30,10 +30,11 @@ function Gate() {
     if (loading) return;
 
     const inAuthGroup = segments[0] === '(auth)' || segments[0] === 'sign-in' || segments[0] === 'mfa-challenge' || segments[0] === 'mfa-enroll';
+    const isResetPassword = segments[1] === 'reset-password' || segments[0] === 'reset-password';
 
     if (!session && !inAuthGroup) {
       router.replace('/(auth)/sign-in');
-    } else if (session && inAuthGroup) {
+    } else if (session && inAuthGroup && !isResetPassword) {
       router.replace('/(tabs)/dashboard');
     }
   }, [loading, !!session, director, segments]);
