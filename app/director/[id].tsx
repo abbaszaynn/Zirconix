@@ -1,9 +1,10 @@
 import { useMemo } from 'react';
-import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Linking, RefreshControl, ScrollView, StyleSheet, Text, View, Pressable } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 
 import { useMyAdvances, useMyExpenditures, useDirectors } from '../../lib/queries';
 import { useSession } from '../../lib/session';
+import { signedReceiptUrl } from '../../lib/receipts';
 import { money, shortDate } from '../../lib/format';
 import { color, radius, space, type } from '../../lib/theme';
 import { Card, Empty, Loading, Money, Pill, SectionTitle } from '../../components/ui';
@@ -95,14 +96,28 @@ export default function DirectorExpenditures() {
                 </View>
                 <View style={s.rowRight}>
                   <Money amount={e.amount} />
-                  <Pill
-                    label={
-                      e.receipt_count === 0
-                        ? 'no receipt'
-                        : `${e.receipt_count} receipt${e.receipt_count === 1 ? '' : 's'}`
-                    }
-                    tone={e.receipt_count === 0 ? 'danger' : 'positive'}
-                  />
+                  <Pressable
+                    disabled={!e.attachments?.length}
+                    onPress={async () => {
+                      const attachment = e.attachments?.[0];
+                      if (!attachment) return;
+                      try {
+                        const url = await signedReceiptUrl(attachment.storage_path);
+                        Linking.openURL(url);
+                      } catch (err) {
+                        Alert.alert('Error', 'Could not open receipt');
+                      }
+                    }}
+                  >
+                    <Pill
+                      label={
+                        e.receipt_count === 0
+                          ? 'no receipt'
+                          : `${e.receipt_count} receipt${e.receipt_count === 1 ? '' : 's'}`
+                      }
+                      tone={e.receipt_count === 0 ? 'danger' : 'positive'}
+                    />
+                  </Pressable>
                 </View>
               </View>
             ))}

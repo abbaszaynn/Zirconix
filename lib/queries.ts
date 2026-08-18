@@ -205,6 +205,11 @@ export function useMyAdvances(entityId: string | undefined, directorId: string |
 
 export type ExpenditureRow = Expenditure & {
   disbursements: { to_director_id: string } | null;
+  attachments: { id: string; storage_path: string; kind: string }[] | null;
+};
+
+export type MyExpenditureRow = Expenditure & {
+  attachments: { id: string; storage_path: string; kind: string }[] | null;
 };
 
 export function useExpenditures(entityId: string | undefined) {
@@ -214,7 +219,7 @@ export function useExpenditures(entityId: string | undefined) {
     queryFn: async (): Promise<ExpenditureRow[]> => {
       const { data, error } = await supabase
         .from('expenditures')
-        .select('*, disbursements(to_director_id)')
+        .select('*, disbursements(to_director_id), attachments(id, storage_path, kind)')
         .eq('entity_id', entityId!)
         .order('spent_on', { ascending: false })
         .limit(200);
@@ -229,16 +234,16 @@ export function useMyExpenditures(entityId: string | undefined, directorId: stri
   return useQuery({
     queryKey: [...qk.expenditures(entityId ?? ''), 'mine', directorId],
     enabled: !!entityId && !!directorId,
-    queryFn: async (): Promise<Expenditure[]> => {
+    queryFn: async (): Promise<MyExpenditureRow[]> => {
       const { data, error } = await supabase
         .from('expenditures')
-        .select('*')
+        .select('*, attachments(id, storage_path, kind)')
         .eq('entity_id', entityId!)
         .eq('entered_by', directorId!)
         .order('spent_on', { ascending: false })
         .limit(200);
       if (error) throw error;
-      return data as Expenditure[];
+      return data as MyExpenditureRow[];
     },
   });
 }
@@ -457,6 +462,46 @@ export function useLogExpenditure() {
       });
       if (error) throw error;
       return data as Expenditure;
+    },
+    onSuccess: () => invalidateAll(qc),
+  });
+}
+
+export type ReplaceReceiptInput = {
+  entityId: string;
+  expenditureId: string;
+  oldAttachmentId: string;
+  newReceipt: {
+    storage_path: string;
+    kind: string;
+    mime_type: string;
+    byte_size?: number;
+  };
+  directorId: string;
+};
+
+export function useReplaceReceipt() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: ReplaceReceiptInput): Promise<void> => {
+      // Insert new attachment
+      const { error: insertError } = await supabase.from('attachments').insert({
+        entity_id: input.entityId,
+        expenditure_id: input.expenditureId,
+        kind: input.newReceipt.kind,
+        storage_path: input.newReceipt.storage_path,
+        mime_type: input.newReceipt.mime_type,
+        byte_size: input.newReceipt.byte_size ?? null,
+        uploaded_by: input.directorId,
+      });
+      if (insertError) throw insertError;
+
+      // Delete old attachment
+      const { error: deleteError } = await supabase
+        .from('attachments')
+        .delete()
+        .eq('id', input.oldAttachmentId);
+      if (deleteError) throw deleteError;
     },
     onSuccess: () => invalidateAll(qc),
   });

@@ -1,10 +1,12 @@
-import { useMemo } from 'react';
-import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useMemo, useState } from 'react';
+import { Alert, Linking, RefreshControl, ScrollView, StyleSheet, Text, View, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
 
-import { useMyAdvances, useMyExpenditures } from '../../lib/queries';
+import { useMyAdvances, useMyExpenditures, useReplaceReceipt } from '../../lib/queries';
 import { useSession } from '../../lib/session';
-import { money, shortDate } from '../../lib/format';
+import { useReceiptPicker } from '../../lib/useReceiptPicker';
+import { signedReceiptUrl, uploadReceipt } from '../../lib/receipts';
+import { money, shortDate, humanError } from '../../lib/format';
 import { color, radius, space, type } from '../../lib/theme';
 import { Button, Card, Empty, Loading, Money, Pill, SectionTitle } from '../../components/ui';
 
@@ -22,6 +24,30 @@ export default function MyExpenditures() {
 
   const advances = useMyAdvances(activeEntity?.id, director?.id);
   const spending = useMyExpenditures(activeEntity?.id, director?.id);
+
+  const { promptUpload, preparing, error, setError } = useReceiptPicker();
+  const replaceReceipt = useReplaceReceipt();
+  const [replacingId, setReplacingId] = useState<string | null>(null);
+
+  const onReplace = (expenditureId: string, oldAttachmentId: string) => {
+    promptUpload(async (receipt) => {
+      setReplacingId(expenditureId);
+      try {
+        const uploaded = await uploadReceipt(activeEntity!.id, receipt);
+        await replaceReceipt.mutateAsync({
+          entityId: activeEntity!.id,
+          expenditureId,
+          oldAttachmentId,
+          newReceipt: uploaded,
+          directorId: director!.id,
+        });
+      } catch (e) {
+        setError(humanError(e));
+      } finally {
+        setReplacingId(null);
+      }
+    });
+  };
 
   const holding = useMemo(() => {
     const rows = advances.data ?? [];
@@ -72,6 +98,8 @@ export default function MyExpenditures() {
         disabled={!hasAdvance}
       />
 
+      {error ? <Text style={{ color: color.danger, marginTop: space.sm }}>{error}</Text> : null}
+
       {!hasAdvance ? (
         <Empty
           title="No advance yet"
@@ -103,17 +131,44 @@ export default function MyExpenditures() {
                 </View>
                 <View style={s.rowRight}>
                   <Money amount={e.amount} />
-                  <Pill
-                    label={
-                      e.receipt_count === 0
-                        ? 'no receipt'
-                        : `${e.receipt_count} receipt${e.receipt_count === 1 ? '' : 's'}`
-                    }
-                    tone={e.receipt_count === 0 ? 'danger' : 'positive'}
-                  />
+                  <View style={{ flexDirection: 'row', gap: space.sm }}>
+                    {e.attachments && e.attachments.length > 0 && (
+                      <Pressable
+                        onPress={() => onReplace(e.id, e.attachments![0].id)}
+                        disabled={preparing || replacingId === e.id}
+                      >
+                        <Pill
+                          label={replacingId === e.id ? 'uploading...' : 'replace'}
+                          tone="neutral"
+                        />
+                      </Pressable>
+                    )}
+                    <Pressable
+                      disabled={!e.attachments?.length}
+                      onPress={async () => {
+                        const attachment = e.attachments?.[0];
+                        if (!attachment) return;
+                        try {
+                          const url = await signedReceiptUrl(attachment.storage_path);
+                          Linking.openURL(url);
+                        } catch (err) {
+                          Alert.alert('Error', 'Could not open receipt');
+                        }
+                      }}
+                    >
+                    <Pill
+                      label={
+                        e.receipt_count === 0
+                          ? 'no receipt'
+                          : `${e.receipt_count} receipt${e.receipt_count === 1 ? '' : 's'}`
+                      }
+                      tone={e.receipt_count === 0 ? 'danger' : 'positive'}
+                    />
+                  </Pressable>
                 </View>
               </View>
-            ))}
+            </View>
+          ))}
           </Card>
         </>
       )}
