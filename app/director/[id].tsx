@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Alert, Linking, RefreshControl, ScrollView, StyleSheet, Text, View, Pressable } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, Stack } from 'expo-router';
 
 import { useMyAdvances, useMyExpenditures, useDirectors } from '../../lib/queries';
 import { useSession } from '../../lib/session';
@@ -37,9 +37,11 @@ export default function DirectorExpenditures() {
   const rows = spending.data ?? [];
 
   return (
-    <ScrollView
-      style={s.screen}
-      contentContainerStyle={s.scroll}
+    <>
+      <Stack.Screen options={{ title: nameOf(id) }} />
+      <ScrollView
+        style={s.screen}
+        contentContainerStyle={s.scroll}
       refreshControl={
         <RefreshControl
           refreshing={spending.isFetching}
@@ -125,6 +127,7 @@ export default function DirectorExpenditures() {
         </>
       )}
     </ScrollView>
+    </>
   );
 }
 
