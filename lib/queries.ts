@@ -248,6 +248,22 @@ export function useMyExpenditures(entityId: string | undefined, directorId: stri
   });
 }
 
+export function useExpenditure(id: string | null) {
+  return useQuery({
+    queryKey: ['expenditure', id],
+    enabled: !!id,
+    queryFn: async (): Promise<MyExpenditureRow> => {
+      const { data, error } = await supabase
+        .from('expenditures')
+        .select('*, attachments(id, storage_path, kind)')
+        .eq('id', id!)
+        .single();
+      if (error) throw error;
+      return data as MyExpenditureRow;
+    },
+  });
+}
+
 export function useDisbursements(entityId: string | undefined) {
   return useQuery({
     queryKey: qk.disbursements(entityId ?? ''),
@@ -462,6 +478,46 @@ export function useLogExpenditure() {
       });
       if (error) throw error;
       return data as Expenditure;
+    },
+    onSuccess: () => invalidateAll(qc),
+  });
+}
+
+export function useDeleteExpenditure() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string): Promise<void> => {
+      const { error } = await supabase.from('expenditures').delete().eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: () => invalidateAll(qc),
+  });
+}
+
+export type UpdateExpenditureInput = {
+  id: string;
+  amount: number;
+  category: string;
+  payee: string;
+  note?: string;
+  disbursementId: string;
+};
+
+export function useUpdateExpenditure() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: UpdateExpenditureInput): Promise<void> => {
+      const { error } = await supabase
+        .from('expenditures')
+        .update({
+          amount: input.amount,
+          category: input.category,
+          payee: input.payee,
+          note: input.note ?? null,
+          disbursement_id: input.disbursementId,
+        })
+        .eq('id', input.id);
+      if (error) throw error;
     },
     onSuccess: () => invalidateAll(qc),
   });

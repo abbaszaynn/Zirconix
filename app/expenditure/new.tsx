@@ -10,11 +10,11 @@ import {
   Text,
   View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 
-import { useLogExpenditure, useMyAdvances } from '../../lib/queries';
+import { useLogExpenditure, useMyAdvances, useExpenditure, useUpdateExpenditure, useReplaceReceipt } from '../../lib/queries';
 import { useSession } from '../../lib/session';
 import {
   compressImage,
@@ -36,10 +36,15 @@ const CATEGORIES = [
 
 export default function NewExpenditure() {
   const router = useRouter();
+  const { edit } = useLocalSearchParams<{ edit?: string }>();
+  const isEditing = !!edit;
   const { activeEntity, director } = useSession();
 
   const advances = useMyAdvances(activeEntity?.id, director?.id);
   const logExpenditure = useLogExpenditure();
+  const updateExpenditure = useUpdateExpenditure();
+  const replaceReceipt = useReplaceReceipt();
+  const { data: editData } = useExpenditure(edit ?? null);
 
   const [disbursementId, setDisbursementId] = useState<string | null>(null);
   const [amount, setAmount] = useState('');
@@ -51,6 +56,16 @@ export default function NewExpenditure() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (isEditing && editData) {
+      setDisbursementId(editData.disbursement_id || null);
+      setAmount(editData.amount.toString());
+      setCategory(editData.category);
+      setPayee(editData.payee);
+      setNote(editData.note || '');
+    }
+  }, [editData, isEditing]);
+
   const selected = useMemo(
     () => (advances.data ?? []).find((a) => a.disbursement_id === disbursementId) ?? null,
     [advances.data, disbursementId],
@@ -61,13 +76,13 @@ export default function NewExpenditure() {
   const overAdvance = selected && amountValid && numericAmount > Number(selected.remaining);
 
   const canSubmit =
-    !!disbursementId && amountValid && !!category && !!payee.trim() && !!receipt && !preparing;
+    !!disbursementId && amountValid && !!category && !!payee.trim() && (isEditing || !!receipt) && !preparing;
 
   useEffect(() => {
-    if (!disbursementId && advances.data && advances.data.length > 0) {
+    if (!isEditing && !disbursementId && advances.data && advances.data.length > 0) {
       setDisbursementId(advances.data[0].disbursement_id);
     }
-  }, [advances.data, disbursementId]);
+  }, [advances.data, disbursementId, isEditing]);
 
   async function pickReceipt(source: 'camera' | 'library') {
     setError(null);
@@ -149,38 +164,57 @@ export default function NewExpenditure() {
   }
 
   async function submit() {
-    if (!canSubmit || !activeEntity || !receipt || !disbursementId || !category) return;
+    if (!canSubmit || !activeEntity || !disbursementId || !category) return;
     setError(null);
 
     try {
-      // Upload first, then one atomic RPC creates the expenditure and its
-      // attachment together. If the RPC fails, the orphaned object is harmless —
-      // it is unreferenced and invisible to every query.
-      const uploaded = await uploadReceipt(activeEntity.id, receipt);
+      if (isEditing && editData) {
+        if (receipt) {
+          const uploaded = await uploadReceipt(activeEntity.id, receipt);
+          await replaceReceipt.mutateAsync({
+            entityId: activeEntity.id,
+            expenditureId: edit!,
+            oldAttachmentId: editData.attachments?.[0]?.id ?? '',
+            newReceipt: uploaded,
+            directorId: director!.id,
+          });
+        }
+        await updateExpenditure.mutateAsync({
+          id: edit!,
+          amount: numericAmount,
+          category,
+          payee: payee.trim(),
+          note: note.trim() || undefined,
+          disbursementId,
+        });
+        setSuccess('Expenditure updated successfully.');
+      } else {
+        if (!receipt) return;
+        const uploaded = await uploadReceipt(activeEntity.id, receipt);
 
-      await logExpenditure.mutateAsync({
-        disbursementId,
-        amount: numericAmount,
-        category,
-        payee: payee.trim(),
-        spentOn: new Date().toISOString().slice(0, 10),
-        note: note.trim() || undefined,
-        attachments: [uploaded],
-      });
+        await logExpenditure.mutateAsync({
+          disbursementId,
+          amount: numericAmount,
+          category,
+          payee: payee.trim(),
+          spentOn: new Date().toISOString().slice(0, 10),
+          note: note.trim() || undefined,
+          attachments: [uploaded],
+        });
 
-      setSuccess(
-        `${money(numericAmount)} to ${payee.trim()} has been recorded with its receipt. ` +
-          'The other directors have been notified.'
-      );
-      
-      setAmount('');
-      setCategory(null);
-      setPayee('');
-      setNote('');
-      setReceipt(null);
-      setDisbursementId(null);
+        setSuccess(
+          `${money(numericAmount)} to ${payee.trim()} has been recorded with its receipt. ` +
+            'The other directors have been notified.'
+        );
+        
+        setAmount('');
+        setCategory(null);
+        setPayee('');
+        setNote('');
+        setReceipt(null);
+        setDisbursementId(null);
+      }
       setError(null);
-
       setTimeout(() => setSuccess(null), 8000);
     } catch (e) {
       setError(humanError(e));
@@ -188,7 +222,7 @@ export default function NewExpenditure() {
     }
   }
 
-  if (advances.isLoading) return <Loading />;
+  if (advances.isLoading || (isEditing && !editData)) return <Loading />;
 
   if ((advances.data ?? []).length === 0) {
     return (
@@ -209,7 +243,7 @@ export default function NewExpenditure() {
     >
       <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
         {error ? <Banner tone="danger" title="Not saved" body={error} /> : null}
-        {success ? <Banner tone="positive" title="Recorded" body={success} /> : null}
+        {success ? <Banner tone="positive" title={isEditing ? 'Updated' : 'Recorded'} body={success} /> : null}
 
         <Text style={s.groupLabel}>CHARGE TO WHICH ADVANCE</Text>
         {(advances.data ?? []).map((a) => {
@@ -282,12 +316,27 @@ export default function NewExpenditure() {
             <View style={s.receiptPreview}>
               <Image source={{ uri: receipt.uri }} style={s.thumb} resizeMode="cover" />
               <View style={s.flex}>
-                <Text style={s.receiptOk}>Receipt attached</Text>
+                <Text style={s.receiptOk}>New receipt attached</Text>
                 <Text style={s.receiptMeta}>
                   Compressed to {(receipt.byteSize / 1024).toFixed(0)} KB before upload
                 </Text>
                 <Pressable onPress={() => setReceipt(null)}>
-                  <Text style={s.replace}>Replace</Text>
+                  <Text style={s.replace}>{isEditing ? 'Cancel replacement' : 'Replace'}</Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : isEditing ? (
+            <View style={s.receiptPreview}>
+              <View style={[s.thumb, { alignItems: 'center', justifyContent: 'center' }]}>
+                <Text style={{ color: color.inkMuted, fontSize: 10 }}>Stored</Text>
+              </View>
+              <View style={s.flex}>
+                <Text style={s.receiptOk}>Existing receipt</Text>
+                <Text style={s.receiptMeta}>
+                  A receipt is already stored for this expenditure.
+                </Text>
+                <Pressable onPress={promptUpload}>
+                  <Text style={s.replace}>Upload new receipt</Text>
                 </Pressable>
               </View>
             </View>
@@ -311,9 +360,9 @@ export default function NewExpenditure() {
         </Card>
 
         <Button
-          label="Record expenditure"
+          label={isEditing ? 'Update expenditure' : 'Record expenditure'}
           onPress={submit}
-          loading={logExpenditure.isPending}
+          loading={logExpenditure.isPending || updateExpenditure.isPending || replaceReceipt.isPending}
           disabled={!canSubmit}
           style={{ marginTop: space.lg }}
         />

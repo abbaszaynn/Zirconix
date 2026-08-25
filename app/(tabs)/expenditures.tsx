@@ -2,10 +2,11 @@ import { useMemo, useState } from 'react';
 import { Alert, Linking, RefreshControl, ScrollView, StyleSheet, Text, View, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
 
-import { useMyAdvances, useMyExpenditures, useReplaceReceipt } from '../../lib/queries';
+import { Feather } from '@expo/vector-icons';
+
+import { useMyAdvances, useMyExpenditures, useDeleteExpenditure } from '../../lib/queries';
 import { useSession } from '../../lib/session';
-import { useReceiptPicker } from '../../lib/useReceiptPicker';
-import { signedReceiptUrl, uploadReceipt } from '../../lib/receipts';
+import { signedReceiptUrl } from '../../lib/receipts';
 import { money, shortDate, humanError } from '../../lib/format';
 import { color, radius, space, type } from '../../lib/theme';
 import { Button, Card, Empty, Loading, Money, Pill, SectionTitle } from '../../components/ui';
@@ -25,28 +26,23 @@ export default function MyExpenditures() {
   const advances = useMyAdvances(activeEntity?.id, director?.id);
   const spending = useMyExpenditures(activeEntity?.id, director?.id);
 
-  const { promptUpload, preparing, error, setError } = useReceiptPicker();
-  const replaceReceipt = useReplaceReceipt();
-  const [replacingId, setReplacingId] = useState<string | null>(null);
+  const deleteExpenditure = useDeleteExpenditure();
 
-  const onReplace = (expenditureId: string, oldAttachmentId: string) => {
-    promptUpload(async (receipt) => {
-      setReplacingId(expenditureId);
-      try {
-        const uploaded = await uploadReceipt(activeEntity!.id, receipt);
-        await replaceReceipt.mutateAsync({
-          entityId: activeEntity!.id,
-          expenditureId,
-          oldAttachmentId,
-          newReceipt: uploaded,
-          directorId: director!.id,
-        });
-      } catch (e) {
-        setError(humanError(e));
-      } finally {
-        setReplacingId(null);
-      }
-    });
+  const onDelete = (expenditureId: string) => {
+    Alert.alert(
+      'Delete expenditure',
+      'Are you sure you want to delete this expenditure and its receipt?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            deleteExpenditure.mutate(expenditureId);
+          },
+        },
+      ]
+    );
   };
 
   const holding = useMemo(() => {
@@ -95,10 +91,8 @@ export default function MyExpenditures() {
       <Button
         label="Add an expenditure"
         onPress={() => router.push('/expenditure/new')}
-        disabled={!hasAdvance}
+        disabled={!hasAdvance || holding.remaining <= 0}
       />
-
-      {error ? <Text style={{ color: color.danger, marginTop: space.sm }}>{error}</Text> : null}
 
       {!hasAdvance ? (
         <Empty
@@ -131,18 +125,19 @@ export default function MyExpenditures() {
                 </View>
                 <View style={s.rowRight}>
                   <Money amount={e.amount} />
-                  <View style={{ flexDirection: 'row', gap: space.sm }}>
-                    {e.attachments && e.attachments.length > 0 && (
-                      <Pressable
-                        onPress={() => onReplace(e.id, e.attachments![0].id)}
-                        disabled={preparing || replacingId === e.id}
-                      >
-                        <Pill
-                          label={replacingId === e.id ? 'uploading...' : 'replace'}
-                          tone="neutral"
-                        />
-                      </Pressable>
-                    )}
+                  <View style={{ flexDirection: 'row', gap: space.md, alignItems: 'center', marginRight: space.sm }}>
+                    <Pressable
+                      onPress={() => router.push(`/expenditure/new?edit=${e.id}`)}
+                    >
+                      <Feather name="edit-2" size={18} color={color.inkMuted} />
+                    </Pressable>
+                    <Pressable
+                      onPress={() => onDelete(e.id)}
+                      disabled={deleteExpenditure.isPending}
+                    >
+                      <Feather name="trash-2" size={18} color={color.danger} />
+                    </Pressable>
+                  </View>
                     <Pressable
                       disabled={!e.attachments?.length}
                       onPress={async () => {
@@ -167,8 +162,7 @@ export default function MyExpenditures() {
                   </Pressable>
                 </View>
               </View>
-            </View>
-          ))}
+            ))}
           </Card>
         </>
       )}
