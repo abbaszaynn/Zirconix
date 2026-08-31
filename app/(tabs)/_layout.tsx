@@ -1,10 +1,11 @@
 import { useEffect } from 'react';
 import { Tabs, useRouter } from 'expo-router';
-import { Text, View, Pressable, StyleSheet } from 'react-native';
+import { Text, View, Pressable, StyleSheet, Platform } from 'react-native';
 
 import { useNotifications, useRealtimeSync, useTransferVotes } from '../../lib/queries';
 import { useSession } from '../../lib/session';
 import { registerForPush } from '../../lib/push';
+import { registerWebPush } from '../../lib/webPush';
 import { color, type } from '../../lib/theme';
 
 /**
@@ -28,10 +29,18 @@ export default function TabsLayout() {
   // pulling to refresh.
   useRealtimeSync(!!director);
 
-  // Fails soft: no token on a simulator or the web build, and none if the
-  // director declines. In-app notifications are written either way.
+  // Asks right when the app opens for a signed-in director, on whichever
+  // platform this is — the native permission dialog on iOS/Android, the
+  // browser's own notification prompt on web. Fails soft everywhere: no
+  // token on a simulator, nothing on an unsupported browser, nothing if
+  // declined. In-app notifications are written regardless of any of this.
   useEffect(() => {
-    if (director) void registerForPush();
+    if (!director) return;
+    if (Platform.OS === 'web') {
+      void registerWebPush();
+    } else {
+      void registerForPush();
+    }
   }, [director]);
 
   return (

@@ -1,12 +1,13 @@
-import { useMemo } from 'react';
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import { Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 
 import { useMarkNotificationsRead, useNotifications } from '../lib/queries';
 import { useSession } from '../lib/session';
 import { dateTime } from '../lib/format';
+import { getWebPushPermission, registerWebPush, type WebPushPermission } from '../lib/webPush';
 import { color, radius, space, type } from '../lib/theme';
-import { Button, Card, Empty, Loading } from '../components/ui';
+import { Banner, Button, Card, Empty, Loading } from '../components/ui';
 import type { Notification } from '../lib/database.types';
 
 /**
@@ -21,6 +22,29 @@ export default function NotificationsScreen() {
 
   const notifications = useNotifications(director?.id);
   const markRead = useMarkNotificationsRead();
+
+  // The tab shell already tries this once, automatically, right after sign-in
+  // — but Safari (and some Chrome/Firefox configurations) only honour
+  // Notification.requestPermission() when it is called directly from a click,
+  // not from a background effect. This button is that click, for whoever's
+  // browser suppressed the automatic ask, and for anyone who dismissed it the
+  // first time and changed their mind.
+  const [webPushPermission, setWebPushPermission] = useState<WebPushPermission>('unsupported');
+  const [enabling, setEnabling] = useState(false);
+
+  useEffect(() => {
+    setWebPushPermission(getWebPushPermission());
+  }, []);
+
+  async function enableWebPush() {
+    setEnabling(true);
+    try {
+      await registerWebPush();
+    } finally {
+      setWebPushPermission(getWebPushPermission());
+      setEnabling(false);
+    }
+  }
 
   const unreadIds = useMemo(
     () => (notifications.data ?? []).filter((n) => !n.read_at).map((n) => n.id),
@@ -53,6 +77,23 @@ export default function NotificationsScreen() {
         />
       }
     >
+      {Platform.OS === 'web' && webPushPermission === 'default' ? (
+        <Banner
+          tone="neutral"
+          title="Turn on browser notifications"
+          body="Get notified the moment a transfer needs your vote or money is spent — even with this tab closed."
+          action={
+            <Button label="Enable" variant="ghost" onPress={() => void enableWebPush()} loading={enabling} />
+          }
+        />
+      ) : Platform.OS === 'web' && webPushPermission === 'denied' ? (
+        <Banner
+          tone="warning"
+          title="Notifications are blocked"
+          body="You'll need to allow notifications for this site in your browser's own settings to turn this back on."
+        />
+      ) : null}
+
       {unreadIds.length > 0 ? (
         <Button
           label={`Mark all ${unreadIds.length} read`}
