@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react';
-import { Alert, Linking, RefreshControl, ScrollView, StyleSheet, Text, View, Pressable } from 'react-native';
+import { Alert, Linking, RefreshControl, ScrollView, StyleSheet, Text, View, Pressable, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 
 import { Feather } from '@expo/vector-icons';
 
-import { useMyAdvances, useMyExpenditures, useDeleteExpenditure } from '../../lib/queries';
+import { useMyAdvances, useMyExpenditures, useDeleteExpenditure, type MyExpenditureRow } from '../../lib/queries';
 import { useSession } from '../../lib/session';
 import { signedReceiptUrl } from '../../lib/receipts';
 import { money, shortDate, humanError } from '../../lib/format';
@@ -27,23 +27,36 @@ export default function MyExpenditures() {
   const spending = useMyExpenditures(activeEntity?.id, director?.id);
 
   const deleteExpenditure = useDeleteExpenditure();
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const onDelete = (expenditureId: string) => {
+  function confirmDelete(e: MyExpenditureRow) {
     Alert.alert(
-      'Delete expenditure',
-      'Are you sure you want to delete this expenditure and its receipt?',
+      'Delete this expenditure?',
+      `${money(e.amount)} to ${e.payee} (${shortDate(e.spent_on)}) will be permanently removed ` +
+        'from your ledger, and the amount goes back onto what you still have to account for. ' +
+        'This cannot be undone — though the record of it having existed, and of you deleting it, ' +
+        'stays in the audit log.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Delete',
           style: 'destructive',
-          onPress: () => {
-            deleteExpenditure.mutate(expenditureId);
-          },
+          onPress: () => void onDelete(e.id),
         },
-      ]
+      ],
     );
-  };
+  }
+
+  async function onDelete(expenditureId: string) {
+    setDeletingId(expenditureId);
+    try {
+      await deleteExpenditure.mutateAsync(expenditureId);
+    } catch (e) {
+      Alert.alert('Could not delete this', humanError(e));
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   const holding = useMemo(() => {
     const rows = advances.data ?? [];
@@ -127,15 +140,22 @@ export default function MyExpenditures() {
                   <Money amount={e.amount} />
                   <View style={{ flexDirection: 'row', gap: space.md, alignItems: 'center', marginRight: space.sm }}>
                     <Pressable
+                      hitSlop={15}
                       onPress={() => router.push(`/expenditure/new?edit=${e.id}`)}
+                      disabled={deletingId === e.id}
                     >
                       <Feather name="edit-2" size={18} color={color.inkMuted} />
                     </Pressable>
                     <Pressable
-                      onPress={() => onDelete(e.id)}
-                      disabled={deleteExpenditure.isPending}
+                      hitSlop={15}
+                      onPress={() => confirmDelete(e)}
+                      disabled={deletingId === e.id}
                     >
-                      <Feather name="trash-2" size={18} color={color.danger} />
+                      <Feather
+                        name="trash-2"
+                        size={18}
+                        color={deletingId === e.id ? color.inkFaint : color.danger}
+                      />
                     </Pressable>
                   </View>
                     <Pressable

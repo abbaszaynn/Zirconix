@@ -483,11 +483,26 @@ export function useLogExpenditure() {
   });
 }
 
+/**
+ * Deletion goes through delete_own_expenditure(), not a raw table `.delete()`.
+ *
+ * `authenticated` has no DELETE grant on `expenditures` at all — table-level
+ * grants are checked before RLS even runs, so a direct `.from('expenditures')
+ * .delete()` was always going to fail, silently or otherwise, no matter who
+ * asked. The RPC is SECURITY DEFINER: it runs as its own owner, so it isn't
+ * subject to that grant, and it does its own ownership check first — a
+ * director can delete an entry he logged himself, and nothing else. The
+ * database is the one place this rule lives; if it's ever loosened (e.g. to
+ * let a finance officer delete on someone's behalf), it changes there, not
+ * by adding a table grant that would reopen this for everyone.
+ */
 export function useDeleteExpenditure() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string): Promise<void> => {
-      const { error } = await supabase.from('expenditures').delete().eq('id', id);
+      const { error } = await supabase.rpc('delete_own_expenditure', {
+        p_expenditure_id: id,
+      });
       if (error) throw error;
     },
     onSuccess: () => invalidateAll(qc),
