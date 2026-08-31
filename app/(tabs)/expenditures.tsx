@@ -30,21 +30,28 @@ export default function MyExpenditures() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   function confirmDelete(e: MyExpenditureRow) {
-    Alert.alert(
-      'Delete this expenditure?',
+    const message =
       `${money(e.amount)} to ${e.payee} (${shortDate(e.spent_on)}) will be permanently removed ` +
-        'from your ledger, and the amount goes back onto what you still have to account for. ' +
-        'This cannot be undone — though the record of it having existed, and of you deleting it, ' +
-        'stays in the audit log.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => void onDelete(e.id),
-        },
-      ],
-    );
+      'from your ledger, and the amount goes back onto what you still have to account for. ' +
+      'This cannot be undone — though the record of it having existed, and of you deleting it, ' +
+      'stays in the audit log.';
+
+    // react-native-web does not reliably fire onPress for a multi-button
+    // Alert.alert — on some builds the dialog never even renders, so a tap on
+    // the trash icon does nothing at all. window.confirm is the one dialog
+    // guaranteed to work in a browser. expenditure/new.tsx already uses this
+    // same split for its receipt-source picker; this mirrors it.
+    if (Platform.OS === 'web') {
+      if (window.confirm(`Delete this expenditure?\n\n${message}`)) {
+        void onDelete(e.id);
+      }
+      return;
+    }
+
+    Alert.alert('Delete this expenditure?', message, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => void onDelete(e.id) },
+    ]);
   }
 
   async function onDelete(expenditureId: string) {
@@ -52,7 +59,12 @@ export default function MyExpenditures() {
     try {
       await deleteExpenditure.mutateAsync(expenditureId);
     } catch (e) {
-      Alert.alert('Could not delete this', humanError(e));
+      const message = humanError(e);
+      if (Platform.OS === 'web') {
+        window.alert(`Could not delete this\n\n${message}`);
+      } else {
+        Alert.alert('Could not delete this', message);
+      }
     } finally {
       setDeletingId(null);
     }
