@@ -87,8 +87,14 @@ export const supabase = createClient(url, anonKey, {
     storage: Platform.OS === 'web' ? (typeof window !== 'undefined' ? AsyncStorage : DummyStorage) : secureChunkedStorage,
     autoRefreshToken: true,
     persistSession: true,
-    // No deep-link session handoff in this app; sign-in is email + password.
-    detectSessionInUrl: false,
+    // A password-reset email links back to /reset-password with the recovery
+    // token in the URL fragment. On web that fragment IS the session handoff —
+    // without this, supabase-js never reads it, no session gets established
+    // from the link, and updateUser({ password }) on the reset screen fails
+    // with no session to act on. Native has no such link (a different scheme,
+    // zirconix://reset-password, would need its own deep-link wiring) and
+    // parsing window.location on native has no meaning, so this stays off there.
+    detectSessionInUrl: Platform.OS === 'web',
   },
 });
 
