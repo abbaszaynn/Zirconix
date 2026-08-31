@@ -34,6 +34,7 @@
       ]
     },
     "web": {
+      "favicon": "./public/favicon/Z_logo.png",
       "bundler": "metro",
       "output": "static"
     },
