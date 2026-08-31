@@ -610,6 +610,10 @@ export function useMarkNotificationsRead() {
         .in('id', ids);
       if (error) throw error;
     },
+    // Without this the bell's unread badge and the list's "unread" styling
+    // stayed stale until something else happened to refetch — marking as read
+    // looked like it silently didn't work.
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['notifications'] }),
   });
 }
 

@@ -1,8 +1,8 @@
 import { useEffect } from 'react';
 import { Tabs, useRouter } from 'expo-router';
-import { Text, Pressable } from 'react-native';
+import { Text, View, Pressable, StyleSheet } from 'react-native';
 
-import { useRealtimeSync, useTransferVotes } from '../../lib/queries';
+import { useNotifications, useRealtimeSync, useTransferVotes } from '../../lib/queries';
 import { useSession } from '../../lib/session';
 import { registerForPush } from '../../lib/push';
 import { color, type } from '../../lib/theme';
@@ -18,7 +18,10 @@ function Glyph({ char, focused }: { char: string; focused: boolean }) {
 export default function TabsLayout() {
   const { activeEntity, director } = useSession();
   const { data: pending } = useTransferVotes(activeEntity?.id, true);
+  const { data: notifications } = useNotifications(director?.id);
   const router = useRouter();
+
+  const unreadCount = notifications?.filter((n) => !n.read_at).length ?? 0;
 
   // Every director's screens follow the database, so a transfer recorded on one
   // phone updates the badge and the dashboard on the other seven without anyone
@@ -42,12 +45,19 @@ export default function TabsLayout() {
         tabBarLabelStyle: { ...type.micro, letterSpacing: 0 },
         sceneStyle: { backgroundColor: color.canvas },
         headerRight: () => (
-          <Pressable
-            onPress={() => router.push('/profile')}
-            style={{ marginRight: 16, padding: 8 }}
-          >
-            <Text style={{ fontSize: 18 }}>👤</Text>
-          </Pressable>
+          <View style={s.headerActions}>
+            <Pressable onPress={() => router.push('/notifications')} style={s.headerIcon}>
+              <Text style={{ fontSize: 18 }}>🔔</Text>
+              {unreadCount > 0 ? (
+                <View style={s.badge}>
+                  <Text style={s.badgeText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
+                </View>
+              ) : null}
+            </Pressable>
+            <Pressable onPress={() => router.push('/profile')} style={s.headerIcon}>
+              <Text style={{ fontSize: 18 }}>👤</Text>
+            </Pressable>
+          </View>
         ),
       }}
     >
@@ -84,3 +94,21 @@ export default function TabsLayout() {
     </Tabs>
   );
 }
+
+const s = StyleSheet.create({
+  headerActions: { flexDirection: 'row', alignItems: 'center', marginRight: 8 },
+  headerIcon: { padding: 8, marginRight: 4 },
+  badge: {
+    position: 'absolute',
+    top: 2,
+    right: 2,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    paddingHorizontal: 3,
+    backgroundColor: color.danger,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  badgeText: { color: '#fff', fontSize: 10, fontWeight: '700' },
+});

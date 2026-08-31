@@ -42,8 +42,9 @@ export default function SignIn() {
   }
 
   async function resetPassword() {
-    if (!email.trim()) {
-      setError('Please enter your email address first.');
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      setError('Enter your email address first, then tap Forgot password? again.');
       return;
     }
     setError(null);
@@ -55,13 +56,22 @@ export default function SignIn() {
           : 'zirconix://reset-password';
 
       const { error: resetError } = await supabase.auth.resetPasswordForEmail(
-        email.trim().toLowerCase(),
-        {
-          redirectTo: redirectUrl,
-        },
+        trimmedEmail.toLowerCase(),
+        { redirectTo: redirectUrl },
       );
       if (resetError) throw resetError;
-      Alert.alert('Reset link sent', 'Check your email for a link to reset your password.');
+
+      const message = `We've sent a link to reset your password to ${trimmedEmail}. Open it on this device to set a new one.`;
+      // Alert.alert with a single button does render on web via most
+      // react-native-web builds, but multi-button dialogs are the ones known
+      // to silently no-op there (see the delete-confirmation fix) — using the
+      // same explicit split everywhere keeps this reliable rather than
+      // depending on that behaviour holding across versions.
+      if (Platform.OS === 'web') {
+        window.alert(`Check your email\n\n${message}`);
+      } else {
+        Alert.alert('Check your email', message);
+      }
     } catch (e) {
       setError(humanError(e));
     } finally {

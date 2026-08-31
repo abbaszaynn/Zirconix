@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -7,6 +7,8 @@ import { supabase } from '../../lib/supabase';
 import { humanError } from '../../lib/format';
 import { color, space, type } from '../../lib/theme';
 import { Banner, Button, Field, Loading } from '../../components/ui';
+
+const MIN_PASSWORD_LENGTH = 6; // matches this project's Supabase Auth minimum
 
 /**
  * Reached from the "Forgot password?" email link.
@@ -28,8 +30,14 @@ export default function ResetPassword() {
   const [checking, setChecking] = useState(true);
   const [linkValid, setLinkValid] = useState(false);
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const tooShort = password.length > 0 && password.length < MIN_PASSWORD_LENGTH;
+  const mismatch = confirmPassword.length > 0 && password !== confirmPassword;
+  const canSubmit =
+    password.length >= MIN_PASSWORD_LENGTH && confirmPassword.length > 0 && !mismatch;
 
   useEffect(() => {
     let settled = false;
@@ -71,11 +79,23 @@ export default function ResetPassword() {
   }, []);
 
   async function submit() {
+    if (!canSubmit) return;
     setError(null);
     setBusy(true);
     try {
       const { error: updateError } = await supabase.auth.updateUser({ password });
       if (updateError) throw updateError;
+
+      // A single-button alert renders fine on web (unlike a multi-button
+      // confirm), but the split keeps this consistent with everywhere else in
+      // the app that shows a result message and stops relying on
+      // react-native-web behaviour that has already broken once (see the
+      // delete-confirmation and forgot-password fixes).
+      if (Platform.OS === 'web') {
+        window.alert('Password updated successfully.');
+      } else {
+        Alert.alert('Password updated', 'Your password has been updated successfully.');
+      }
       router.replace('/(tabs)/dashboard');
     } catch (e) {
       setError(humanError(e));
@@ -117,21 +137,34 @@ export default function ResetPassword() {
               {error ? <Banner tone="danger" title="Could not update password" body={error} /> : null}
 
               <Field
-                label="New Password"
+                label="New password"
                 value={password}
                 onChangeText={setPassword}
                 secureTextEntry
                 autoCapitalize="none"
                 textContentType="newPassword"
+                returnKeyType="next"
+                hint={tooShort ? undefined : `At least ${MIN_PASSWORD_LENGTH} characters.`}
+                error={tooShort ? `Needs at least ${MIN_PASSWORD_LENGTH} characters.` : undefined}
+              />
+
+              <Field
+                label="Confirm password"
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
+                secureTextEntry
+                autoCapitalize="none"
+                textContentType="newPassword"
                 onSubmitEditing={submit}
                 returnKeyType="go"
+                error={mismatch ? 'Does not match the password above.' : undefined}
               />
 
               <Button
                 label="Save new password"
                 onPress={submit}
                 loading={busy}
-                disabled={!password}
+                disabled={!canSubmit}
               />
             </>
           )}
