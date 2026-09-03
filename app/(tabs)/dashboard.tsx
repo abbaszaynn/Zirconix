@@ -291,14 +291,27 @@ export default function Dashboard() {
                       </Text>
                     </View>
                     <View style={s.accRight}>
+                      {/* Three states, not two. A negative outstanding means the
+                          director has receipted MORE than he was advanced — an
+                          anomaly needing an answer, not "clear". */}
                       <Money
                         amount={outstanding}
-                        tone={outstanding > 0 ? 'warning' : 'positive'}
+                        tone={
+                          outstanding > 0 ? 'warning' : outstanding < 0 ? 'danger' : 'positive'
+                        }
                         size="large"
                       />
                       <Pill
-                        label={outstanding > 0 ? 'outstanding' : 'clear'}
-                        tone={outstanding > 0 ? 'warning' : 'positive'}
+                        label={
+                          outstanding > 0
+                            ? 'outstanding'
+                            : outstanding < 0
+                              ? 'over-accounted'
+                              : 'clear'
+                        }
+                        tone={
+                          outstanding > 0 ? 'warning' : outstanding < 0 ? 'danger' : 'positive'
+                        }
                       />
                     </View>
                   </View>

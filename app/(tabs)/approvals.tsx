@@ -8,6 +8,7 @@ import {
   useDirectors,
   useMyVotes,
   useTransferVotes,
+  useVoidDisbursement,
 } from '../../lib/queries';
 import { useSession } from '../../lib/session';
 import { humanError, shortDate } from '../../lib/format';
@@ -34,9 +35,68 @@ export default function Approvals() {
   const history = useApprovalHistory(activeEntity?.id);
   const { data: directors } = useDirectors();
   const cast = useCastVote();
+  const voidTransfer = useVoidDisbursement();
 
   const [rejecting, setRejecting] = useState<string | null>(null);
   const [reason, setReason] = useState('');
+
+  /**
+   * Voiding is for an entry that should not exist — a duplicate, or one
+   * recorded against the wrong person. It is not a vote, so it is kept
+   * visually apart from Approve/Reject and limited to whoever recorded the
+   * transfer (or a finance officer), which the database enforces anyway.
+   */
+  async function voidRow(row: TransferVoteRow) {
+    const why =
+      Platform.OS === 'web'
+        ? window.prompt(
+            `Void ${row.recipient_name}'s transfer?
+
+This removes it from every balance. ` +
+              'It stays in the audit log with your reason. Say why:',
+          )
+        : null;
+
+    if (Platform.OS === 'web' && !why?.trim()) return;
+
+    if (Platform.OS !== 'web') {
+      Alert.prompt?.(
+        'Void this transfer?',
+        'It is removed from every balance but stays in the audit log. Why is it being voided?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Void',
+            style: 'destructive',
+            onPress: (text?: string) => {
+              if (text?.trim()) void runVoid(row, text.trim());
+            },
+          },
+        ],
+        'plain-text',
+      );
+      return;
+    }
+
+    await runVoid(row, why!.trim());
+  }
+
+  async function runVoid(row: TransferVoteRow, why: string) {
+    try {
+      await voidTransfer.mutateAsync({ disbursementId: row.disbursement_id, reason: why });
+      const msg = `${row.recipient_name}'s transfer has been voided and no longer counts towards any balance.`;
+      if (Platform.OS === 'web') window.alert(`Voided
+
+${msg}`);
+      else Alert.alert('Voided', msg);
+    } catch (e) {
+      const message = humanError(e);
+      if (Platform.OS === 'web') window.alert(`Could not void this
+
+${message}`);
+      else Alert.alert('Could not void this', message);
+    }
+  }
 
   const nameOf = useMemo(() => {
     const m = new Map((directors ?? []).map((d) => [d.id, d.full_name]));
@@ -268,6 +328,20 @@ ${message}`);
                   />
                 </View>
               )}
+
+              {iAmSender || director?.role === 'finance_officer' ? (
+                <View style={s.voidRow}>
+                  <Text style={s.voidHint}>
+                    Recorded by mistake — a duplicate, or the wrong director?
+                  </Text>
+                  <Button
+                    label="Void entry"
+                    variant="ghost"
+                    loading={voidTransfer.isPending}
+                    onPress={() => void voidRow(row)}
+                  />
+                </View>
+              ) : null}
             </Card>
           );
         })
@@ -352,6 +426,13 @@ const s = StyleSheet.create({
   actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: space.sm },
   rejectBox: { gap: space.sm },
   voted: { ...type.caption, color: color.positive },
+  voidRow: {
+    borderTopWidth: 1,
+    borderTopColor: color.border,
+    paddingTop: space.sm,
+    gap: space.xs,
+  },
+  voidHint: { ...type.caption, color: color.inkFaint },
   histRow: {
     flexDirection: 'row',
     alignItems: 'center',

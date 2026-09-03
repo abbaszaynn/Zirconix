@@ -643,6 +643,30 @@ export function useReplaceReceipt() {
   });
 }
 
+/**
+ * Voids a transfer that should never have been recorded — a duplicate, a typo,
+ * an entry against the wrong director.
+ *
+ * Deliberately not the same as rejecting it. A rejection is a decision the
+ * board made about real money; a void says the row is not a movement of money
+ * at all. The database refuses to void an advance that already has spending
+ * logged against it, and refuses to un-void anything.
+ */
+export function useVoidDisbursement() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { disbursementId: string; reason: string }) => {
+      const { data, error } = await supabase.rpc('void_disbursement', {
+        p_disbursement_id: input.disbursementId,
+        p_reason: input.reason,
+      });
+      if (error) throw error;
+      return data as Disbursement;
+    },
+    onSuccess: () => invalidateAll(qc),
+  });
+}
+
 /** One director's vote on one transfer. The database tallies and decides. */
 export function useCastVote() {
   const qc = useQueryClient();
