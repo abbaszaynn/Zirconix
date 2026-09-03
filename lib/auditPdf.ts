@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 
@@ -378,10 +379,14 @@ ${cards || '<p>No events match this filter.</p>'}
 }
 
 export async function exportAuditPdf(input: AuditReportInput): Promise<void> {
-  const { uri } = await Print.printToFileAsync({
-    html: buildAuditReportHtml(input),
-    base64: false,
-  });
+  const html = buildAuditReportHtml(input);
+
+  if (Platform.OS === 'web') {
+    await printHtmlOnWeb(html);
+    return;
+  }
+
+  const { uri } = await Print.printToFileAsync({ html, base64: false });
 
   if (await Sharing.isAvailableAsync()) {
     await Sharing.shareAsync(uri, {
@@ -390,7 +395,68 @@ export async function exportAuditPdf(input: AuditReportInput): Promise<void> {
       UTI: 'com.adobe.pdf',
     });
   } else {
-    // Desktop web has no share sheet; the print dialog is the export.
-    await Print.printAsync({ html: buildAuditReportHtml(input) });
+    await Print.printAsync({ html });
   }
+}
+
+/**
+ * expo-print's web implementation (ExponentPrint.web.ts) does not print
+ * arbitrary HTML at all — both print() and printToFileAsync() ignore the html
+ * argument entirely and just call window.print() on whatever is currently on
+ * screen. That is why the exported report was one page with none of the
+ * per-event detail this file builds: it was printing the live Audit tab —
+ * its filter chips, its chain banner, one screenful of the app — never the
+ * report itself.
+ *
+ * A hidden iframe with its own document is the standard way to print custom
+ * HTML from a page without navigating away from it. It is also more reliable
+ * than window.open() for this: a new tab needs to be opened synchronously
+ * inside the click handler to avoid a popup blocker, which is awkward here
+ * since the report is only built after an async chain-integrity refetch; an
+ * iframe carries no such popup permission and works regardless of timing.
+ */
+async function printHtmlOnWeb(html: string): Promise<void> {
+  const iframe = document.createElement('iframe');
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = '0';
+  document.body.appendChild(iframe);
+
+  const cleanup = () => {
+    // Removing right after print() can cancel the dialog in some browsers,
+    // so this leaves a moment for it to actually open first.
+    setTimeout(() => iframe.parentNode?.removeChild(iframe), 1000);
+  };
+
+  const doc = iframe.contentWindow?.document;
+  if (!doc) {
+    iframe.parentNode?.removeChild(iframe);
+    throw new Error('Your browser would not create the print view. Try again, or use a different browser.');
+  }
+
+  doc.open();
+  doc.write(html);
+  doc.close();
+
+  await new Promise<void>((resolve) => {
+    // Printing before the iframe has actually painted can produce a blank
+    // first page in some browsers, so this waits for its own load event —
+    // with a fallback timer in case that event has already fired or never
+    // reliably does for a document written this way.
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    if (iframe.contentWindow) iframe.contentWindow.onload = settle;
+    setTimeout(settle, 400);
+  });
+
+  iframe.contentWindow?.focus();
+  iframe.contentWindow?.print();
+  cleanup();
 }

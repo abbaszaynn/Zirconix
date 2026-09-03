@@ -27,6 +27,28 @@ const TABLES = [
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+// Gives the browser's own calendar-picker icon a sane, consistently-sized
+// click target and vertical centering — an inline `style` object on the
+// <input> itself cannot reach a pseudo-element like this, so it is injected
+// once as a real <style> tag instead.
+let webDateStylesInjected = false;
+function ensureWebDateStyles() {
+  if (webDateStylesInjected || typeof document === 'undefined') return;
+  webDateStylesInjected = true;
+  const style = document.createElement('style');
+  style.textContent = `
+    .zx-date-input::-webkit-calendar-picker-indicator {
+      padding: 6px;
+      margin-right: -4px;
+      border-radius: 4px;
+      cursor: pointer;
+      opacity: 0.65;
+    }
+    .zx-date-input::-webkit-calendar-picker-indicator:hover { opacity: 1; }
+  `;
+  document.head.appendChild(style);
+}
+
 /**
  * A real calendar picker on web (the actual deployment target), via a plain
  * DOM <input type="date"> — React Native has no cross-platform date-picker
@@ -34,6 +56,12 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
  * feature the native build does not ship yet. React.createElement bypasses
  * JSX's intrinsic-element typing, since <input> is not a valid RN component
  * name. Native falls back to a validated text field below.
+ *
+ * Styled to match this app's own Field component (same height, border,
+ * radius) rather than the browser's bare default, and explicitly pinned to
+ * light color-scheme: without that, a device set to dark mode renders the
+ * calendar icon white-on-white against this app's always-light input — not
+ * missing, just invisible — regardless of anything else about its size.
  */
 function WebDateInput({
   value,
@@ -44,19 +72,24 @@ function WebDateInput({
   onChange: (v: string) => void;
   max?: string;
 }) {
+  ensureWebDateStyles();
   return createElement('input', {
     type: 'date',
     value,
     max,
+    className: 'zx-date-input',
     onChange: (e: { target: { value: string } }) => onChange(e.target.value),
     style: {
       fontFamily: 'inherit',
-      fontSize: 14,
-      padding: '10px 12px',
-      borderRadius: radius.sm,
-      border: `1px solid ${color.border}`,
+      fontSize: 16,
+      height: 50,
+      boxSizing: 'border-box',
+      padding: `0 ${space.md}px`,
+      borderRadius: radius.md,
+      border: `1px solid ${color.borderStrong}`,
       color: color.ink,
       background: color.surface,
+      colorScheme: 'light',
       width: '100%',
     },
   });
