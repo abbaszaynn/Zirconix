@@ -514,7 +514,8 @@ export function useRecordDisbursement() {
 }
 
 export type NewExpenditure = {
-  disbursementId: string;
+  /** Whose pool of advances this draws down — normally the caller's own. */
+  directorId: string;
   amount: number;
   category: string;
   payee: string;
@@ -528,12 +529,19 @@ export type NewExpenditure = {
   }[];
 };
 
+/**
+ * Charges an expenditure against a director's total pool of advances, not one
+ * named transfer. Several disbursements to the same director are still
+ * separate voted, audited rows underneath — log_expenditure() picks one as
+ * the bookkeeping anchor — but the amount a director can spend, and the cap
+ * that stops him overspending, is the sum of everything confirmed and live.
+ */
 export function useLogExpenditure() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: NewExpenditure): Promise<Expenditure> => {
       const { data, error } = await supabase.rpc('log_expenditure', {
-        p_disbursement_id: input.disbursementId,
+        p_director_id: input.directorId,
         p_amount: input.amount,
         p_category: input.category,
         p_payee: input.payee,

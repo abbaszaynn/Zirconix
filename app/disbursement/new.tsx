@@ -68,7 +68,7 @@ export default function NewDisbursement() {
   // Proof of the transfer is required, the same as a receipt is for spending.
   // record_disbursement_auto_budget() refuses without one, so this is a
   // convenience check rather than the actual control.
-  const { receipt, setReceipt, preparing, promptUpload, error: pickError } = useReceiptPicker();
+  const { receipt, setReceipt, preparing, pickReceipt, pickFiles, error: pickError } = useReceiptPicker();
 
   // Same double-submit window as the expenditure form: uploadReceipt() runs
   // before the mutation, so isPending alone leaves the button live during the
@@ -229,18 +229,31 @@ export default function NewDisbursement() {
           same standard directors are held to when they log what they spent.
         </Text>
         {pickError ? <Banner tone="danger" title="Could not attach" body={pickError} /> : null}
-        <Button
-          label={
-            preparing
-              ? 'Preparing…'
-              : receipt
-                ? `Attached · ${Math.round(receipt.byteSize / 1024)} KB — replace`
-                : 'Attach proof'
-          }
-          variant="secondary"
-          loading={preparing}
-          onPress={() => promptUpload()}
-        />
+        {receipt ? (
+          <Button
+            label={`Attached · ${Math.round(receipt.byteSize / 1024)} KB — replace`}
+            variant="secondary"
+            loading={preparing}
+            onPress={() => setReceipt(null)}
+          />
+        ) : (
+          <View style={{ flexDirection: 'row', gap: space.md }}>
+            <Button
+              label="Take photo"
+              variant="secondary"
+              loading={preparing}
+              onPress={() => pickReceipt('camera')}
+              style={{ flex: 1 }}
+            />
+            <Button
+              label="Choose file"
+              variant="secondary"
+              loading={preparing}
+              onPress={() => pickFiles()}
+              style={{ flex: 1 }}
+            />
+          </View>
+        )}
 
         <View style={{ height: space.xl }} />
 

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Alert,
   Image,
   KeyboardAvoidingView,
   Platform,
@@ -22,7 +21,7 @@ import {
   uploadReceipt,
   type PreparedReceipt,
 } from '../../lib/receipts';
-import { humanError, money, shortDate } from '../../lib/format';
+import { humanError, money } from '../../lib/format';
 import { color, radius, space, type } from '../../lib/theme';
 import { Banner, Button, Card, Choice, Empty, Field, Loading, Money } from '../../components/ui';
 
@@ -46,7 +45,6 @@ export default function NewExpenditure() {
   const replaceReceipt = useReplaceReceipt();
   const { data: editData } = useExpenditure(edit ?? null);
 
-  const [disbursementId, setDisbursementId] = useState<string | null>(null);
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState<string | null>(null);
   const [payee, setPayee] = useState('');
@@ -58,7 +56,6 @@ export default function NewExpenditure() {
 
   useEffect(() => {
     if (isEditing && editData) {
-      setDisbursementId(editData.disbursement_id || null);
       setAmount(editData.amount.toString());
       setCategory(editData.category);
       setPayee(editData.payee);
@@ -66,14 +63,27 @@ export default function NewExpenditure() {
     }
   }, [editData, isEditing]);
 
-  const selected = useMemo(
-    () => (advances.data ?? []).find((a) => a.disbursement_id === disbursementId) ?? null,
-    [advances.data, disbursementId],
-  );
+  /**
+   * One pool, not a list to pick from. Several transfers to the same director
+   * are still separate voted rows underneath, but a director does not think in
+   * those terms while spending — he was given a total and draws against the
+   * total. log_expenditure() enforces this same cap server-side; this is only
+   * what lets the form say so before he uploads a receipt.
+   */
+  const pool = useMemo(() => {
+    const rows = advances.data ?? [];
+    return {
+      advanced: rows.reduce((n, r) => n + Number(r.advanced), 0),
+      spent: rows.reduce((n, r) => n + Number(r.spent), 0),
+      remaining: rows.reduce((n, r) => n + Number(r.remaining), 0),
+    };
+  }, [advances.data]);
 
   const numericAmount = Number(amount.replace(/,/g, ''));
   const amountValid = Number.isFinite(numericAmount) && numericAmount > 0;
-  const overAdvance = selected && amountValid && numericAmount > Number(selected.remaining);
+  // Editing an existing entry does not draw further against the pool — its
+  // amount is already inside `pool.spent` — so the cap only applies to a new one.
+  const overAdvance = !isEditing && amountValid && numericAmount > pool.remaining;
 
   // Guards the window BEFORE the mutation starts. uploadReceipt() runs first
   // and can take a second or more on a site connection, during which the
@@ -83,17 +93,11 @@ export default function NewExpenditure() {
   const [submitting, setSubmitting] = useState(false);
 
   const canSubmit =
-    !!disbursementId && amountValid && !!category && !!payee.trim() &&
+    amountValid && !!category && !!payee.trim() &&
     (isEditing || !!receipt) && !preparing && !submitting &&
     // The database refuses this outright now; blocking here means the director
     // finds out before uploading a receipt rather than after.
     !overAdvance;
-
-  useEffect(() => {
-    if (!isEditing && !disbursementId && advances.data && advances.data.length > 0) {
-      setDisbursementId(advances.data[0].disbursement_id);
-    }
-  }, [advances.data, disbursementId, isEditing]);
 
   async function pickReceipt(source: 'camera' | 'library') {
     setError(null);
@@ -156,26 +160,8 @@ export default function NewExpenditure() {
     }
   }
 
-  function promptUpload() {
-    if (Platform.OS === 'web') {
-      const wantCamera = window.confirm('Use Camera? (Click Cancel to choose files)');
-      if (wantCamera) {
-        pickReceipt('camera');
-      } else {
-        pickFiles();
-      }
-      return;
-    }
-
-    Alert.alert('Uploads', 'Choose a source for your receipt', [
-      { text: 'Camera', onPress: () => pickReceipt('camera') },
-      { text: 'Files', onPress: () => pickFiles() },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
-  }
-
   async function submit() {
-    if (!canSubmit || !activeEntity || !disbursementId || !category) return;
+    if (!canSubmit || !activeEntity || !director || !category) return;
     setError(null);
     setSubmitting(true);
 
@@ -197,7 +183,9 @@ export default function NewExpenditure() {
           category,
           payee: payee.trim(),
           note: note.trim() || undefined,
-          disbursementId,
+          // Unchanged — there is no picker to change it from any more, and
+          // the database treats this as immutable regardless.
+          disbursementId: editData.disbursement_id,
         });
         setSuccess('Expenditure updated successfully.');
       } else {
@@ -205,7 +193,7 @@ export default function NewExpenditure() {
         const uploaded = await uploadReceipt(activeEntity.id, receipt);
 
         await logExpenditure.mutateAsync({
-          disbursementId,
+          directorId: director.id,
           amount: numericAmount,
           category,
           payee: payee.trim(),
@@ -218,13 +206,12 @@ export default function NewExpenditure() {
           `${money(numericAmount)} to ${payee.trim()} has been recorded with its receipt. ` +
             'The other directors have been notified.'
         );
-        
+
         setAmount('');
         setCategory(null);
         setPayee('');
         setNote('');
         setReceipt(null);
-        setDisbursementId(null);
       }
       setError(null);
       setTimeout(() => setSuccess(null), 8000);
@@ -257,31 +244,21 @@ export default function NewExpenditure() {
         {error ? <Banner tone="danger" title="Not saved" body={error} /> : null}
         {success ? <Banner tone="positive" title={isEditing ? 'Updated' : 'Recorded'} body={success} /> : null}
 
-        <Text style={s.groupLabel}>CHARGE TO WHICH ADVANCE</Text>
-        {(advances.data ?? []).map((a) => {
-          const active = a.disbursement_id === disbursementId;
-          return (
-            <Pressable
-              key={a.disbursement_id}
-              onPress={() => setDisbursementId(a.disbursement_id)}
-              style={[s.advance, active && s.advanceActive]}
-            >
-              <View style={s.flex}>
-                <Text style={s.advanceTitle}>
-                  {a.method === 'cash' ? 'Cash advance' : 'Bank transfer'} ·{' '}
-                  {shortDate(a.disbursed_on)}
-                </Text>
-                <Text style={s.advanceMeta}>
-                  {money(a.spent)} spent of {money(a.advanced)}
-                </Text>
-              </View>
-              <View style={s.advanceRight}>
-                <Money amount={a.remaining} tone={Number(a.remaining) > 0 ? 'neutral' : 'warning'} />
-                <Text style={s.advanceRemaining}>remaining</Text>
-              </View>
-            </Pressable>
-          );
-        })}
+        {!isEditing ? (
+          <Card style={s.poolCard}>
+            <Text style={s.groupLabel}>AVAILABLE TO SPEND</Text>
+            <Money
+              amount={pool.remaining}
+              size="display"
+              align="left"
+              tone={pool.remaining > 0 ? 'neutral' : 'warning'}
+            />
+            <Text style={s.poolMeta}>
+              {money(pool.spent)} accounted for of {money(pool.advanced)} advanced to you in
+              total{advances.data && advances.data.length > 1 ? ` across ${advances.data.length} transfers` : ''}
+            </Text>
+          </Card>
+        ) : null}
 
         <View style={{ height: space.xl }} />
 
@@ -294,9 +271,9 @@ export default function NewExpenditure() {
           style={s.amountInput}
           error={
             overAdvance
-              ? `Only ${money(selected!.remaining)} is left on that advance, so this cannot be saved. ` +
-                `An expenditure settles an advance — it cannot exceed it. If you spent your own ` +
-                `money, ask for it to be transferred to you first, then account for it against that.`
+              ? `Only ${money(pool.remaining)} is left available to you, so this cannot be saved. ` +
+                `An expenditure settles what you were advanced — it cannot exceed it. If you spent ` +
+                `your own money, ask for it to be transferred to you first, then account for it against that.`
               : undefined
           }
         />
@@ -349,9 +326,14 @@ export default function NewExpenditure() {
                 <Text style={s.receiptMeta}>
                   A receipt is already stored for this expenditure.
                 </Text>
-                <Pressable onPress={promptUpload}>
-                  <Text style={s.replace}>Upload new receipt</Text>
-                </Pressable>
+                <View style={s.receiptButtons}>
+                  <Pressable onPress={() => pickReceipt('camera')}>
+                    <Text style={s.replace}>Take photo</Text>
+                  </Pressable>
+                  <Pressable onPress={pickFiles}>
+                    <Text style={s.replace}>Choose file</Text>
+                  </Pressable>
+                </View>
               </View>
             </View>
           ) : (
@@ -362,9 +344,16 @@ export default function NewExpenditure() {
               </Text>
               <View style={s.receiptButtons}>
                 <Button
-                  label="Uploads"
+                  label="Take photo"
                   variant="secondary"
-                  onPress={promptUpload}
+                  onPress={() => pickReceipt('camera')}
+                  loading={preparing}
+                  style={s.flex}
+                />
+                <Button
+                  label="Choose file"
+                  variant="secondary"
+                  onPress={pickFiles}
                   loading={preparing}
                   style={s.flex}
                 />
@@ -398,23 +387,8 @@ const s = StyleSheet.create({
   flex: { flex: 1 },
 
   groupLabel: { ...type.micro, color: color.inkMuted, marginBottom: space.sm },
-
-  advance: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.md,
-    backgroundColor: color.surface,
-    borderWidth: 1,
-    borderColor: color.border,
-    borderRadius: radius.md,
-    padding: space.lg,
-    marginBottom: space.sm,
-  },
-  advanceActive: { borderColor: color.accent, backgroundColor: color.accentSoft },
-  advanceTitle: { ...type.body, color: color.ink, fontWeight: '600' },
-  advanceMeta: { ...type.caption, color: color.inkMuted, marginTop: 2 },
-  advanceRight: { alignItems: 'flex-end' },
-  advanceRemaining: { ...type.micro, color: color.inkFaint },
+  poolCard: { gap: space.xs },
+  poolMeta: { ...type.caption, color: color.inkMuted, marginTop: space.xs },
 
   amountInput: { fontSize: 24, fontWeight: '700', fontVariant: ['tabular-nums'], height: 60 },
   noteInput: { height: 80, paddingTop: space.md, textAlignVertical: 'top' },

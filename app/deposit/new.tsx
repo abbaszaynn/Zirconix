@@ -51,7 +51,7 @@ export default function NewDeposit() {
 
   // Incoming funds need proof, same as a director's expenditure does. The
   // database enforces this too — record_deposit() refuses without one.
-  const { receipt, setReceipt, preparing, promptUpload, error: pickError } = useReceiptPicker();
+  const { receipt, setReceipt, preparing, pickReceipt, pickFiles, error: pickError } = useReceiptPicker();
 
   const numericAmount = Number(amount.replace(/,/g, ''));
   const amountValid = Number.isFinite(numericAmount) && numericAmount > 0;
@@ -182,18 +182,31 @@ export default function NewDeposit() {
           coming in is recorded with evidence, the same as money going out.
         </Text>
         {pickError ? <Banner tone="danger" title="Could not attach" body={pickError} /> : null}
-        <Button
-          label={
-            preparing
-              ? 'Preparing…'
-              : receipt
-                ? `Attached · ${Math.round(receipt.byteSize / 1024)} KB — replace`
-                : 'Attach proof'
-          }
-          variant="secondary"
-          loading={preparing}
-          onPress={() => promptUpload()}
-        />
+        {receipt ? (
+          <Button
+            label={`Attached · ${Math.round(receipt.byteSize / 1024)} KB — replace`}
+            variant="secondary"
+            loading={preparing}
+            onPress={() => setReceipt(null)}
+          />
+        ) : (
+          <View style={{ flexDirection: 'row', gap: space.md }}>
+            <Button
+              label="Take photo"
+              variant="secondary"
+              loading={preparing}
+              onPress={() => pickReceipt('camera')}
+              style={{ flex: 1 }}
+            />
+            <Button
+              label="Choose file"
+              variant="secondary"
+              loading={preparing}
+              onPress={() => pickFiles()}
+              style={{ flex: 1 }}
+            />
+          </View>
+        )}
 
         <View style={{ height: space.xl }} />
 

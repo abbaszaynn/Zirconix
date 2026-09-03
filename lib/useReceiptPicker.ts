@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { Alert, Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 
@@ -77,30 +76,19 @@ export function useReceiptPicker() {
     }
   }
 
-  function promptUpload(onSelect?: (receipt: PreparedReceipt) => void) {
-    if (Platform.OS === 'web') {
-      const wantCamera = window.confirm('Use Camera? (Click Cancel to choose files)');
-      if (wantCamera) {
-        pickReceipt('camera').then((r) => r && onSelect?.(r));
-      } else {
-        pickFiles().then((r) => r && onSelect?.(r));
-      }
-      return;
-    }
-
-    Alert.alert('Uploads', 'Choose a source for your receipt', [
-      { text: 'Camera', onPress: () => pickReceipt('camera').then((r) => r && onSelect?.(r)) },
-      { text: 'Files', onPress: () => pickFiles().then((r) => r && onSelect?.(r)) },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
-  }
-
   return {
     receipt,
     setReceipt,
     preparing,
     error,
     setError,
-    promptUpload,
+    // Two explicit actions rather than one dialog that asks the director to
+    // choose between them. The dialog version — window.confirm on web,
+    // Alert.alert on native — used "OK for camera, Cancel for files" on web,
+    // which on a mobile browser reads as "tap OK to proceed" and never
+    // surfaces the file option at all. Always showing both buttons removes
+    // the ambiguity instead of relying on a dialog being read carefully.
+    pickReceipt,
+    pickFiles,
   };
 }
