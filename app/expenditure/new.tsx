@@ -84,7 +84,10 @@ export default function NewExpenditure() {
 
   const canSubmit =
     !!disbursementId && amountValid && !!category && !!payee.trim() &&
-    (isEditing || !!receipt) && !preparing && !submitting;
+    (isEditing || !!receipt) && !preparing && !submitting &&
+    // The database refuses this outright now; blocking here means the director
+    // finds out before uploading a receipt rather than after.
+    !overAdvance;
 
   useEffect(() => {
     if (!isEditing && !disbursementId && advances.data && advances.data.length > 0) {
@@ -291,7 +294,9 @@ export default function NewExpenditure() {
           style={s.amountInput}
           error={
             overAdvance
-              ? `This is more than the ${money(selected!.remaining)} left on that advance. It will be recorded, but it will show as an unexplained gap until a further disbursement covers it.`
+              ? `Only ${money(selected!.remaining)} is left on that advance, so this cannot be saved. ` +
+                `An expenditure settles an advance — it cannot exceed it. If you spent your own ` +
+                `money, ask for it to be transferred to you first, then account for it against that.`
               : undefined
           }
         />
