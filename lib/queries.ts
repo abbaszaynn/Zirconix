@@ -152,17 +152,28 @@ export function usePeriods(entityId: string | undefined) {
   });
 }
 
-export function useBudgetSummary(entityId: string | undefined, period: string | undefined) {
+/**
+ * Budget lines, optionally scoped to one period.
+ *
+ * Called without a period by the dashboard, which shows a running position
+ * across every month rather than resetting at each month boundary — the bug
+ * that made September's available balance read as all-time deposits minus only
+ * September's disbursements.
+ */
+export function useBudgetSummary(entityId: string | undefined, period?: string | null) {
   return useQuery({
-    queryKey: qk.budget(entityId ?? '', period ?? ''),
-    enabled: !!entityId && !!period,
+    queryKey: qk.budget(entityId ?? '', period ?? '__all__'),
+    enabled: !!entityId,
     queryFn: async (): Promise<BudgetSummaryRow[]> => {
-      const { data, error } = await supabase
+      let q = supabase
         .from('v_budget_summary')
         .select('*')
         .eq('entity_id', entityId!)
-        .eq('period', period!)
         .order('category');
+
+      if (period) q = q.eq('period', period);
+
+      const { data, error } = await q;
       if (error) throw error;
       return data as BudgetSummaryRow[];
     },
@@ -281,10 +292,16 @@ export function useDisbursements(entityId: string | undefined) {
   });
 }
 
-/** Transfers awaiting a vote, with who has already voted and in what capacity. */
-export function useTransferVotes(entityId: string | undefined, onlyPending = true) {
+/**
+ * Transfers that still need the board's attention.
+ *
+ * That is not the same as "pending" any more: a transfer can be confirmed by
+ * majority and still carry an objection nobody has resolved. Both belong on
+ * the approvals screen, so this asks for either.
+ */
+export function useTransferVotes(entityId: string | undefined, onlyOpen = true) {
   return useQuery({
-    queryKey: [...qk.votes(entityId ?? ''), onlyPending],
+    queryKey: [...qk.votes(entityId ?? ''), onlyOpen],
     enabled: !!entityId,
     queryFn: async (): Promise<TransferVoteRow[]> => {
       let q = supabase
@@ -293,7 +310,7 @@ export function useTransferVotes(entityId: string | undefined, onlyPending = tru
         .eq('entity_id', entityId!)
         .order('amount', { ascending: false });
 
-      if (onlyPending) q = q.eq('status', 'pending_approval');
+      if (onlyOpen) q = q.or('status.eq.pending_approval,under_review.is.true');
 
       const { data, error } = await q;
       if (error) throw error;
@@ -352,9 +369,11 @@ export function useNotifications(directorId: string | undefined) {
 export function useAuditEvents(entityId: string | undefined, filters?: {
   actorId?: string;
   table?: string;
+  /** 'YYYY-MM'. Bounds the log to one calendar month, for a monthly audit. */
+  month?: string;
 }) {
   return useQuery({
-    queryKey: [...qk.audit(entityId ?? ''), filters?.actorId, filters?.table],
+    queryKey: [...qk.audit(entityId ?? ''), filters?.actorId, filters?.table, filters?.month],
     enabled: !!entityId,
     queryFn: async (): Promise<AuditEvent[]> => {
       let q = supabase
@@ -367,10 +386,43 @@ export function useAuditEvents(entityId: string | undefined, filters?: {
       if (filters?.actorId) q = q.eq('actor_id', filters.actorId);
       if (filters?.table) q = q.eq('table_name', filters.table);
 
+      if (filters?.month) {
+        const [y, m] = filters.month.split('-').map(Number);
+        // Half-open [start of month, start of next month) so the boundary
+        // instant belongs to exactly one month.
+        const start = new Date(Date.UTC(y, m - 1, 1));
+        const end = new Date(Date.UTC(y, m, 1));
+        q = q.gte('created_at', start.toISOString()).lt('created_at', end.toISOString());
+      }
+
       const { data, error } = await q;
       if (error) throw error;
       return data as AuditEvent[];
     },
+  });
+}
+
+/** The months that actually have audit entries, newest first, as 'YYYY-MM'. */
+export function useAuditMonths(entityId: string | undefined) {
+  return useQuery({
+    queryKey: ['auditMonths', entityId],
+    enabled: !!entityId,
+    queryFn: async (): Promise<string[]> => {
+      const { data, error } = await supabase
+        .from('audit_events')
+        .select('created_at')
+        .eq('entity_id', entityId!)
+        .order('id', { ascending: false })
+        .limit(2000);
+      if (error) throw error;
+
+      const months = new Set<string>();
+      for (const row of data ?? []) {
+        months.add(String(row.created_at).slice(0, 7));
+      }
+      return [...months].sort().reverse();
+    },
+    staleTime: 5 * 60 * 1000,
   });
 }
 
@@ -411,6 +463,13 @@ export function useApprovalHistory(entityId: string | undefined) {
 // Writes
 // ─────────────────────────────────────────────────────────────────────────────
 
+export type ProofAttachment = {
+  storage_path: string;
+  kind: string;
+  mime_type: string;
+  byte_size?: number;
+};
+
 export type NewDisbursement = {
   entityId: string;
   category: string;
@@ -421,6 +480,8 @@ export type NewDisbursement = {
   disbursedToRef: string;
   disbursedOn: string;
   note?: string;
+  /** Required — the database refuses a transfer with no proof of payment. */
+  attachments: ProofAttachment[];
 };
 
 export function useRecordDisbursement() {
@@ -438,7 +499,11 @@ export function useRecordDisbursement() {
           p_disbursed_to_ref: input.disbursedToRef,
           p_disbursed_on: input.disbursedOn,
           p_note: input.note ?? null,
-          p_recorded_by: input.toDirectorId, // Should ideally be the logged-in director, but the original code passed toDirectorId here for some reason. Wait, actually we can pass input.recordedBy if it's there. Let's pass input.toDirectorId. Or we can just let RPC handle it using auth.uid(), but RPC is invoker so auth.uid() works. Let's just pass input.toDirectorId for now to match original.
+          // Ignored by the RPC, which stamps recorded_by from
+          // current_director_id() itself — the client cannot record a transfer
+          // as somebody else. Still passed because the signature requires it.
+          p_recorded_by: input.toDirectorId,
+          p_attachments: input.attachments,
         })
         .single();
       if (error) throw error;
@@ -652,30 +717,34 @@ export type NewDeposit = {
   sourceDirectorId?: string | null;
   sourceInvestorName?: string | null;
   depositDate: string;
-  recordedBy: string;
+  /** Required — the database refuses incoming funds with no slip or confirmation. */
+  attachments: ProofAttachment[];
 };
 
+/**
+ * Goes through record_deposit() rather than inserting into the table.
+ *
+ * The deposit and its proof have to land in one transaction: a deferred
+ * constraint trigger checks at COMMIT that a proof exists, so a bare table
+ * insert can no longer succeed on its own.
+ */
 export function useCreateDeposit() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: NewDeposit): Promise<AccountDeposit> => {
-      const { data, error } = await supabase
-        .from('account_deposits')
-        .insert({
-          entity_id: input.entityId,
-          to_account_id: input.toAccountId,
-          amount: input.amount,
-          source_type: input.sourceType,
-          source_director_id: input.sourceDirectorId ?? null,
-          source_investor_name: input.sourceInvestorName ?? null,
-          deposit_date: input.depositDate,
-          recorded_by: input.recordedBy,
-        })
-        .select()
-        .single();
+      const { data, error } = await supabase.rpc('record_deposit', {
+        p_entity_id: input.entityId,
+        p_to_account_id: input.toAccountId,
+        p_amount: input.amount,
+        p_source_type: input.sourceType,
+        p_source_director_id: input.sourceDirectorId ?? null,
+        p_source_investor_name: input.sourceInvestorName ?? null,
+        p_deposit_date: input.depositDate,
+        p_attachments: input.attachments,
+      });
       if (error) throw error;
       return data as AccountDeposit;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['deposits'] }),
+    onSuccess: () => invalidateAll(qc),
   });
 }

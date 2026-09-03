@@ -124,9 +124,12 @@ export interface Disbursement {
   disbursed_on: string;
   note: string | null;
   status: EntryStatus;
-  /** 2 below the approval threshold, 4 at or above it. Set by the database. */
+  /** Majority needed to settle: this many approvals confirms, this many rejections rejects. */
   required_votes: number;
   approval_count: number;
+  rejection_count: number;
+  /** At least one objection outstanding. Independent of status. */
+  under_review: boolean;
   recorded_by: string;
   created_at: string;
   updated_at: string;
@@ -218,19 +221,29 @@ export interface DirectorAccountabilityRow {
   outstanding: number;
 }
 
+export interface TransferObjection {
+  name: string;
+  reason: string | null;
+  at: string;
+}
+
 /**
  * Vote progress for a transfer, joined to the names a director needs to see.
  *
- * `principals` is 1 when the sender and recipient are the same person, which is
- * why `independents_required` is derived rather than being `required_votes - 2`.
+ * Majority rules: `approval_count` reaching `required_votes` confirms it,
+ * `rejection_count` reaching it rejects it. `under_review` is independent of
+ * status — a confirmed transfer someone has since objected to stays confirmed
+ * and spendable, but carries the flag until the board resolves it.
  */
 export interface TransferVoteRow {
   disbursement_id: string;
   entity_id: string;
   amount: number;
   status: EntryStatus;
+  under_review: boolean;
   required_votes: number;
   approval_count: number;
+  rejection_count: number;
   method: DisbursementMethod;
   disbursed_on: string;
   note: string | null;
@@ -242,11 +255,7 @@ export interface TransferVoteRow {
   sender_name: string;
   category: string;
   period: string;
-  principals: number;
-  sender_voted: boolean;
-  recipient_voted: boolean;
-  independent_votes: number;
-  independents_required: number;
+  objections: TransferObjection[] | null;
 }
 
 export interface DisbursementBalanceRow {

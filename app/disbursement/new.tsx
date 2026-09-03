@@ -17,11 +17,11 @@ import {
   useRecordDisbursement,
 } from '../../lib/queries';
 import { useSession } from '../../lib/session';
+import { useReceiptPicker } from '../../lib/useReceiptPicker';
+import { uploadReceipt } from '../../lib/receipts';
 import { humanError, money } from '../../lib/format';
 import { color, radius, space, type } from '../../lib/theme';
 import { Banner, Button, Choice, Empty, Field, Loading, Money } from '../../components/ui';
-
-const THRESHOLD = 1000000;
 
 export default function NewDisbursement() {
   const router = useRouter();
@@ -64,13 +64,19 @@ export default function NewDisbursement() {
 
   const numericAmount = Number(amount.replace(/,/g, ''));
   const amountValid = Number.isFinite(numericAmount) && numericAmount > 0;
-  const needsApproval = amountValid && numericAmount >= THRESHOLD;
+
+  // Proof of the transfer is required, the same as a receipt is for spending.
+  // record_disbursement_auto_budget() refuses without one, so this is a
+  // convenience check rather than the actual control.
+  const { receipt, setReceipt, preparing, promptUpload, error: pickError } = useReceiptPicker();
 
   const canSubmit =
     !!category &&
     !!fromAccountId &&
     !!toDirectorId &&
     amountValid &&
+    !!receipt &&
+    !preparing &&
     (method === 'cash' || !!accountRef.trim());
 
   async function submit() {
@@ -78,6 +84,8 @@ export default function NewDisbursement() {
     setError(null);
 
     try {
+      const uploaded = await uploadReceipt(activeEntity.id, receipt!);
+
       const created = await record.mutateAsync({
         entityId: activeEntity.id,
         category,
@@ -88,20 +96,20 @@ export default function NewDisbursement() {
         disbursedToRef: method === 'cash' ? 'cash' : accountRef.trim(),
         disbursedOn: new Date().toISOString().slice(0, 10),
         note: note.trim() || undefined,
+        attachments: [uploaded],
       });
 
       setSuccess(
-        `${money(numericAmount)} recorded. Every director has been notified, and it needs ` +
-          `${created.required_votes} votes before it is confirmed — ` +
-          (created.required_votes === 2
-            ? 'yours and the recipient’s.'
-            : 'yours, the recipient’s, and two other directors’.')
+        `${money(numericAmount)} recorded with its proof. Every director has been notified. ` +
+          `It is confirmed once ${created.required_votes} directors approve it, and rejected ` +
+          `if ${created.required_votes} reject it.`
       );
-      
+
       setAmount('');
       setNote('');
       setCategory(null);
       setToDirectorId(null);
+      setReceipt(null);
       setError(null);
 
       setTimeout(() => setSuccess(null), 8000);
@@ -174,11 +182,7 @@ export default function NewDisbursement() {
           keyboardType="decimal-pad"
           placeholder="0"
           style={s.amountInput}
-          hint={
-            needsApproval
-              ? `At or above ${money(THRESHOLD)} — a second director will have to approve this.`
-              : undefined
-          }
+          hint="Every transfer goes to the board, whatever the amount."
         />
 
         <Choice
@@ -210,8 +214,29 @@ export default function NewDisbursement() {
           style={s.noteInput}
         />
 
+        <Text style={s.proofLabel}>PROOF OF TRANSFER</Text>
+        <Text style={s.proofHint}>
+          The bank confirmation, or a photo of the cash being handed over. Required — the
+          same standard directors are held to when they log what they spent.
+        </Text>
+        {pickError ? <Banner tone="danger" title="Could not attach" body={pickError} /> : null}
         <Button
-          label={needsApproval ? 'Submit for approval' : 'Record disbursement'}
+          label={
+            preparing
+              ? 'Preparing…'
+              : receipt
+                ? `Attached · ${Math.round(receipt.byteSize / 1024)} KB — replace`
+                : 'Attach proof'
+          }
+          variant="secondary"
+          loading={preparing}
+          onPress={() => promptUpload()}
+        />
+
+        <View style={{ height: space.xl }} />
+
+        <Button
+          label="Record disbursement"
           onPress={submit}
           loading={record.isPending}
           disabled={!canSubmit}
@@ -224,6 +249,8 @@ export default function NewDisbursement() {
 }
 
 const s = StyleSheet.create({
+  proofLabel: { ...type.micro, color: color.inkMuted, marginBottom: space.xs, letterSpacing: 1 },
+  proofHint: { ...type.caption, color: color.inkMuted, marginBottom: space.sm, lineHeight: 17 },
   screen: { flex: 1, backgroundColor: color.canvas },
   content: { padding: space.lg },
   flex: { flex: 1 },

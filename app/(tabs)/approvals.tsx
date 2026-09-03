@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Alert, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Platform, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 
 import {
@@ -55,18 +55,41 @@ export default function Approvals() {
       setRejecting(null);
       setReason('');
 
-      Alert.alert(
+      const title =
         result.status === 'confirmed'
-          ? 'Transfer confirmed'
+          ? result.under_review
+            ? 'Approved by majority, but under review'
+            : 'Transfer confirmed'
           : result.status === 'rejected'
-            ? 'Transfer rejected'
-            : 'Vote recorded',
-        result.status === 'pending_approval'
-          ? `${result.approval_count} of ${result.required_votes} votes in. Every director has been notified.`
-          : 'Every director has been notified.',
-      );
+            ? 'Transfer rejected by majority'
+            : 'Vote recorded';
+
+      const body =
+        result.status === 'confirmed' && result.under_review
+          ? 'It has the votes and the recipient can spend against it, but an objection is outstanding for the board to resolve.'
+          : result.status === 'pending_approval'
+            ? `${result.approval_count} of ${result.required_votes} approvals in` +
+              (result.rejection_count > 0
+                ? `, ${result.rejection_count} against. It is flagged for review.`
+                : '. Every director has been notified.')
+            : 'Every director has been notified.';
+
+      if (Platform.OS === 'web') {
+        window.alert(`${title}
+
+${body}`);
+      } else {
+        Alert.alert(title, body);
+      }
     } catch (e) {
-      Alert.alert('Could not record your vote', humanError(e));
+      const message = humanError(e);
+      if (Platform.OS === 'web') {
+        window.alert(`Could not record your vote
+
+${message}`);
+      } else {
+        Alert.alert('Could not record your vote', message);
+      }
     }
   }
 
@@ -118,8 +141,8 @@ export default function Approvals() {
         />
       ) : null}
 
-      <SectionTitle note="4 votes required (sender, recipient, and two independent directors)">
-        Awaiting a vote
+      <SectionTitle note="4 approvals confirms it · 4 rejections rejects it · any objection flags it for review">
+        Needs the board
       </SectionTitle>
 
       {(votes.data ?? []).length === 0 ? (
@@ -147,44 +170,62 @@ export default function Approvals() {
                   </Text>
                   <Text style={s.meta}>recorded by {row.sender_name}</Text>
                 </View>
-                <Pill
-                  label={`${row.approval_count} of ${row.required_votes}`}
-                  tone={row.approval_count > 0 ? 'warning' : 'neutral'}
-                />
+                <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                  <Pill
+                    label={`${row.approval_count} of ${row.required_votes}`}
+                    tone={
+                      row.status === 'confirmed'
+                        ? 'positive'
+                        : row.approval_count > 0
+                          ? 'warning'
+                          : 'neutral'
+                    }
+                  />
+                  {row.under_review ? <Pill label="under review" tone="danger" /> : null}
+                </View>
               </View>
 
               {row.note ? <Text style={s.note}>{row.note}</Text> : null}
 
               <View style={s.tally}>
                 <Tick
-                  done={row.sender_voted}
-                  label={`Sender — ${row.sender_name}`}
-                  you={iAmSender}
+                  done={row.approval_count >= row.required_votes}
+                  label={`Approvals — ${row.approval_count} of ${row.required_votes}`}
                 />
-                {row.principals > 1 ? (
-                  <Tick
-                    done={row.recipient_voted}
-                    label={`Recipient — ${row.recipient_name}`}
-                    you={iAmRecipient}
-                  />
-                ) : (
+                <Tick
+                  done={row.rejection_count >= row.required_votes}
+                  label={`Rejections — ${row.rejection_count} of ${row.required_votes}`}
+                />
+                {iAmSender || iAmRecipient ? (
                   <Text style={s.selfNote}>
-                    Recorded to himself, so an extra independent director is required in
-                    place of the second principal.
+                    You are the {iAmSender ? 'sender' : 'recipient'} of this transfer. Your
+                    vote counts the same as anyone else's — a majority still needs three
+                    other directors.
                   </Text>
-                )}
-                {row.independents_required > 0 ? (
-                  <Tick
-                    done={row.independent_votes >= row.independents_required}
-                    label={`Independent directors — ${row.independent_votes} of ${row.independents_required}`}
-                  />
                 ) : null}
               </View>
 
+              {row.under_review && (row.objections ?? []).length > 0 ? (
+                <View style={s.objections}>
+                  <Text style={s.objectionsTitle}>
+                    Objection{(row.objections ?? []).length === 1 ? '' : 's'} to resolve
+                  </Text>
+                  {(row.objections ?? []).map((o, oi) => (
+                    <Text key={oi} style={s.objectionLine}>
+                      {o.name}: {o.reason?.trim() ? o.reason : 'no reason given'}
+                    </Text>
+                  ))}
+                </View>
+              ) : null}
+
               {myDecision ? (
                 <Text style={s.voted}>
-                  You {myDecision === 'approved' ? 'approved' : 'rejected'} this. Waiting on
-                  the others.
+                  You {myDecision === 'approved' ? 'approved' : 'objected to'} this.
+                  {row.status === 'pending_approval'
+                    ? ' Waiting on the others.'
+                    : row.under_review
+                      ? ' It carries the votes but the objection still needs resolving.'
+                      : ''}
                 </Text>
               ) : !canVote ? null : rejecting === row.disbursement_id ? (
                 <View style={s.rejectBox}>
@@ -299,7 +340,15 @@ const s = StyleSheet.create({
   tick: { ...type.body, width: 16 },
   tickLabel: { ...type.caption, color: color.inkMuted, flex: 1 },
   tickDone: { color: color.ink },
-  selfNote: { ...type.caption, color: color.warning, marginLeft: 24 },
+  selfNote: { ...type.caption, color: color.inkMuted, marginLeft: 24 },
+  objections: {
+    backgroundColor: color.dangerSoft,
+    borderRadius: radius.sm,
+    padding: space.sm,
+    gap: 2,
+  },
+  objectionsTitle: { ...type.caption, color: color.danger, fontWeight: '700' },
+  objectionLine: { ...type.caption, color: color.danger },
   actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: space.sm },
   rejectBox: { gap: space.sm },
   voted: { ...type.caption, color: color.positive },

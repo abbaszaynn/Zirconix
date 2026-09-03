@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Link, useRouter } from 'expo-router';
 
@@ -6,7 +6,6 @@ import {
   useAccountability,
   useBudgetSummary,
   useDirectors,
-  usePeriods,
   useDeposits,
 } from '../../lib/queries';
 import { useSession } from '../../lib/session';
@@ -17,12 +16,12 @@ import { Banner, Button, Card, Empty, Loading, Money, Pill, SectionTitle } from 
 export default function Dashboard() {
   const router = useRouter();
   const { activeEntity, director, hasEnrolledMfa } = useSession();
-  const [period, setPeriod] = useState<string | null>(null);
 
-  const { data: periods } = usePeriods(activeEntity?.id);
-  const effectivePeriod = period ?? periods?.[0];
-
-  const budget = useBudgetSummary(activeEntity?.id, effectivePeriod);
+  // No period filter. There is one bank balance, not a per-month one — scoping
+  // this to a month is what made September read as all-time deposits minus
+  // only September's disbursements, resetting the balance every month instead
+  // of carrying it forward. Month-by-month review lives on the Audit tab.
+  const budget = useBudgetSummary(activeEntity?.id);
   const accountability = useAccountability(activeEntity?.id);
   const deposits = useDeposits(activeEntity?.id);
   const { data: directors } = useDirectors();
@@ -40,9 +39,36 @@ export default function Dashboard() {
     );
   }, [budget.data]);
 
+  /**
+   * One row per category across every month. The same category has its own
+   * budget line in each period, so without this the list repeats "Equipment"
+   * once per month it appears in.
+   */
+  const byCategory = useMemo(() => {
+    const map = new Map<string, { category: string; allocated: number; spent: number; unaccounted: number }>();
+    for (const r of budget.data ?? []) {
+      const row = map.get(r.category) ?? {
+        category: r.category,
+        allocated: 0,
+        spent: 0,
+        unaccounted: 0,
+      };
+      row.allocated += Number(r.allocated_amount);
+      row.spent += Number(r.spent_amount);
+      row.unaccounted += Number(r.unaccounted_amount);
+      map.set(r.category, row);
+    }
+    return [...map.values()].sort((a, b) => b.spent - a.spent);
+  }, [budget.data]);
+
   const totalFund = useMemo(() => {
     return (deposits.data ?? []).reduce((acc, d) => acc + Number(d.amount), 0);
   }, [deposits.data]);
+
+  // Everything ever put in, less everything ever paid out. Can legitimately go
+  // negative, and that is worth saying out loud rather than clamping to zero —
+  // it means the books do not balance.
+  const available = totalFund - totals.disbursed;
 
   const nameOf = (id: string) =>
     directors?.find((d) => d.id === id)?.full_name ?? 'Unknown director';
@@ -89,27 +115,15 @@ export default function Dashboard() {
         />
       ) : null}
 
-      {periods && periods.length > 1 ? (
-        <View style={s.periodRow}>
-          {periods.map((p) => {
-            const active = p === effectivePeriod;
-            return (
-              <Text
-                key={p}
-                onPress={() => setPeriod(p)}
-                style={[s.period, active && s.periodActive]}
-              >
-                {p}
-              </Text>
-            );
-          })}
-        </View>
-      ) : null}
-
-      {/* Headline: showing available balance. */}
+      {/* Headline: the running cash position, all months included. */}
       <Card style={s.hero}>
         <Text style={s.heroLabel}>AVAILABLE BALANCE</Text>
-        <Money amount={totalFund - totals.disbursed} size="display" align="left" />
+        <Money
+          amount={available}
+          size="display"
+          align="left"
+          tone={available < 0 ? 'danger' : 'neutral'}
+        />
 
         <View style={s.heroGrid}>
           <Stat label="Total Fund" amount={totalFund} />
@@ -117,11 +131,20 @@ export default function Dashboard() {
           <Stat label="Spent" amount={totals.spent} />
         </View>
 
-        <Text style={s.heroNote}>
-          {totals.unaccounted > 0
-            ? `${money(totals.unaccounted)} has left the company and is not yet explained by a receipted expenditure.`
-            : 'Every rupee disbursed is accounted for by a receipted expenditure.'}
-        </Text>
+        {available < 0 ? (
+          <Text style={[s.heroNote, s.heroAlarm]}>
+            {money(Math.abs(available))} more has been disbursed than was ever deposited into
+            the company accounts. Either an incoming payment has not been recorded, or a
+            transfer was recorded against money the accounts did not hold. This needs
+            reconciling.
+          </Text>
+        ) : (
+          <Text style={s.heroNote}>
+            {totals.unaccounted > 0
+              ? `${money(totals.unaccounted)} has left the company and is not yet explained by a receipted expenditure.`
+              : 'Every rupee disbursed is accounted for by a receipted expenditure.'}
+          </Text>
+        )}
       </Card>
 
       <View style={s.actions}>
@@ -186,35 +209,30 @@ export default function Dashboard() {
         </Card>
       )}
 
-      <SectionTitle note="Allocated against spent, per category">By category</SectionTitle>
+      <SectionTitle note="Spent against allocated, every month combined">
+        By category
+      </SectionTitle>
 
       {budget.isLoading ? (
         <Loading />
-      ) : (budget.data ?? []).length === 0 ? (
+      ) : byCategory.length === 0 ? (
         <Empty
           title="No budget lines yet"
-          body={`Nothing has been allocated for ${effectivePeriod ?? 'this period'}.`}
+          body="Nothing has been allocated. A budget line is created automatically the first time money is disbursed against a category."
         />
       ) : (
         <Card style={s.tableCard}>
-          {(budget.data ?? []).map((r, i) => {
-            const pct =
-              Number(r.allocated_amount) > 0
-                ? Math.min(1, Number(r.spent_amount) / Number(r.allocated_amount))
-                : 0;
-            const over = Number(r.spent_amount) > Number(r.allocated_amount);
+          {byCategory.map((r, i) => {
+            const pct = r.allocated > 0 ? Math.min(1, r.spent / r.allocated) : 0;
+            const over = r.spent > r.allocated;
 
             return (
-              <View key={r.budget_line_id} style={[s.catRow, i > 0 && s.catRowDivided]}>
+              <View key={r.category} style={[s.catRow, i > 0 && s.catRowDivided]}>
                 <View style={s.catHead}>
                   <Text style={s.catName} numberOfLines={1}>
                     {r.category}
                   </Text>
-                  <Money
-                    amount={r.spent_amount}
-                    tone={over ? 'danger' : 'neutral'}
-                    size="body"
-                  />
+                  <Money amount={r.spent} tone={over ? 'danger' : 'neutral'} size="body" />
                 </View>
 
                 <View style={s.bar}>
@@ -228,13 +246,9 @@ export default function Dashboard() {
                 </View>
 
                 <View style={s.catFoot}>
-                  <Text style={s.catMeta}>
-                    of {lakhCrore(r.allocated_amount)} allocated
-                  </Text>
-                  {Number(r.unaccounted_amount) > 0 ? (
-                    <Text style={s.catFlag}>
-                      {lakhCrore(r.unaccounted_amount)} unaccounted
-                    </Text>
+                  <Text style={s.catMeta}>of {lakhCrore(r.allocated)} allocated</Text>
+                  {r.unaccounted > 0 ? (
+                    <Text style={s.catFlag}>{lakhCrore(r.unaccounted)} unaccounted</Text>
                   ) : null}
                 </View>
               </View>
@@ -321,18 +335,6 @@ const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: color.canvas },
   content: { padding: space.lg, paddingTop: space.lg },
 
-  periodRow: { flexDirection: 'row', gap: space.sm, marginTop: space.lg, flexWrap: 'wrap' },
-  period: {
-    ...type.caption,
-    color: color.inkMuted,
-    paddingHorizontal: space.md,
-    paddingVertical: space.xs + 2,
-    borderRadius: radius.pill,
-    backgroundColor: color.surfaceSunken,
-    overflow: 'hidden',
-  },
-  periodActive: { backgroundColor: color.ink, color: '#fff', fontWeight: '600' },
-
   hero: { marginTop: space.lg },
   heroLabel: { ...type.micro, color: color.inkMuted, marginBottom: space.xs },
   heroGrid: {
@@ -346,6 +348,7 @@ const s = StyleSheet.create({
   stat: { flex: 1 },
   statLabel: { ...type.micro, color: color.inkFaint, marginBottom: space.xs },
   heroNote: { ...type.caption, color: color.inkMuted, marginTop: space.lg, lineHeight: 17 },
+  heroAlarm: { color: color.danger, fontWeight: '600' },
 
   actions: { flexDirection: 'row', gap: space.md, marginTop: space.lg },
   actionBtn: { flex: 1 },

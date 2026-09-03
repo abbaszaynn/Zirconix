@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Alert, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 
-import { useAuditEvents, useChainIntegrity, useDirectors } from '../../lib/queries';
+import { useAuditEvents, useAuditMonths, useChainIntegrity, useDirectors } from '../../lib/queries';
 import { useSession } from '../../lib/session';
 import { dateTime, humanError } from '../../lib/format';
 import { exportAuditPdf } from '../../lib/auditPdf';
@@ -17,16 +17,30 @@ const TABLES = [
   { value: 'budget_lines', label: 'Budgets' },
 ];
 
+/** '2026-08' -> 'August 2026', for the month chips. */
+function monthLabel(ym: string): string {
+  const [y, m] = ym.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString('en-PK', {
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+}
+
 export default function AuditLog() {
   const { activeEntity, director } = useSession();
   const [table, setTable] = useState('');
   const [actorId, setActorId] = useState('');
+  const [month, setMonth] = useState('');
   const [expanded, setExpanded] = useState<number | null>(null);
   const [printing, setPrinting] = useState(false);
+
+  const { data: months } = useAuditMonths(activeEntity?.id);
 
   const events = useAuditEvents(activeEntity?.id, {
     table: table || undefined,
     actorId: actorId || undefined,
+    month: month || undefined,
   });
   const chain = useChainIntegrity();
   const { data: directors } = useDirectors();
@@ -50,6 +64,7 @@ export default function AuditLog() {
         chain: fresh.data ?? chain.data,
         generatedBy: director?.full_name ?? 'Unknown',
         filterNote: [
+          month ? monthLabel(month) : 'All time',
           table ? TABLES.find((t) => t.value === table)?.label : null,
           actorId ? nameOf(actorId) : null,
         ]
@@ -65,8 +80,36 @@ export default function AuditLog() {
 
   const header = (
     <View style={s.header}>
+      {months && months.length > 0 ? (
+        <View style={s.filters}>
+          <Pressable
+            onPress={() => setMonth('')}
+            style={[s.chip, month === '' && s.chipActive]}
+          >
+            <Text style={[s.chipText, month === '' && s.chipTextActive]}>All time</Text>
+          </Pressable>
+          {months.map((m) => (
+            <Pressable
+              key={m}
+              onPress={() => setMonth(m)}
+              style={[s.chip, month === m && s.chipActive]}
+            >
+              <Text style={[s.chipText, month === m && s.chipTextActive]}>
+                {monthLabel(m)}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+
       <Button
-        label={printing ? 'Preparing…' : 'Print audit log (PDF)'}
+        label={
+          printing
+            ? 'Preparing…'
+            : month
+              ? `Print ${monthLabel(month)} audit (PDF)`
+              : 'Print audit log (PDF)'
+        }
         variant="secondary"
         onPress={() => void printReport()}
         loading={printing}
