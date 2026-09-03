@@ -369,11 +369,21 @@ export function useNotifications(directorId: string | undefined) {
 export function useAuditEvents(entityId: string | undefined, filters?: {
   actorId?: string;
   table?: string;
-  /** 'YYYY-MM'. Bounds the log to one calendar month, for a monthly audit. */
+  /** 'YYYY-MM'. Bounds the log to one calendar month. Ignored if from/to is set. */
   month?: string;
+  /** 'YYYY-MM-DD', inclusive on both ends. Takes priority over `month`. */
+  from?: string;
+  to?: string;
 }) {
   return useQuery({
-    queryKey: [...qk.audit(entityId ?? ''), filters?.actorId, filters?.table, filters?.month],
+    queryKey: [
+      ...qk.audit(entityId ?? ''),
+      filters?.actorId,
+      filters?.table,
+      filters?.month,
+      filters?.from,
+      filters?.to,
+    ],
     enabled: !!entityId,
     queryFn: async (): Promise<AuditEvent[]> => {
       let q = supabase
@@ -381,12 +391,21 @@ export function useAuditEvents(entityId: string | undefined, filters?: {
         .select('*')
         .eq('entity_id', entityId!)
         .order('id', { ascending: false })
-        .limit(500);
+        // A filtered report is meant to be complete, not a sample — 500 was
+        // already generous for this project's volume, this just leaves more
+        // headroom before a report would silently truncate.
+        .limit(2000);
 
       if (filters?.actorId) q = q.eq('actor_id', filters.actorId);
       if (filters?.table) q = q.eq('table_name', filters.table);
 
-      if (filters?.month) {
+      if (filters?.from || filters?.to) {
+        // Both bounds are calendar dates in the director's own sense of "day",
+        // so `to` is treated as through the END of that day, not its start —
+        // otherwise a same-day range (from = to) would match nothing.
+        if (filters.from) q = q.gte('created_at', `${filters.from}T00:00:00.000Z`);
+        if (filters.to) q = q.lt('created_at', addOneDay(filters.to));
+      } else if (filters?.month) {
         const [y, m] = filters.month.split('-').map(Number);
         // Half-open [start of month, start of next month) so the boundary
         // instant belongs to exactly one month.
@@ -400,6 +419,11 @@ export function useAuditEvents(entityId: string | undefined, filters?: {
       return data as AuditEvent[];
     },
   });
+}
+
+function addOneDay(ymd: string): string {
+  const [y, m, d] = ymd.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + 1)).toISOString();
 }
 
 /** The months that actually have audit entries, newest first, as 'YYYY-MM'. */

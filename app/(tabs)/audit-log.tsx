@@ -1,21 +1,66 @@
-import { useState } from 'react';
-import { Alert, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { createElement, useState } from 'react';
+import { Alert, FlatList, Platform, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 
-import { useAuditEvents, useAuditMonths, useChainIntegrity, useDirectors } from '../../lib/queries';
+import {
+  useAccounts,
+  useAuditEvents,
+  useAuditMonths,
+  useBudgetSummary,
+  useChainIntegrity,
+  useDirectors,
+} from '../../lib/queries';
 import { useSession } from '../../lib/session';
 import { dateTime, humanError } from '../../lib/format';
 import { exportAuditPdf } from '../../lib/auditPdf';
 import { color, radius, space, type } from '../../lib/theme';
-import { Banner, Button, Card, Empty, Loading, Pill } from '../../components/ui';
+import { Banner, Button, Card, Empty, Field, Loading, Pill } from '../../components/ui';
 
 const TABLES = [
   { value: '', label: 'All' },
   { value: 'expenditures', label: 'Expenditures' },
   { value: 'disbursements', label: 'Disbursements' },
+  { value: 'account_deposits', label: 'Incoming funds' },
   { value: 'approvals', label: 'Approvals' },
   { value: 'attachments', label: 'Receipts' },
   { value: 'budget_lines', label: 'Budgets' },
 ];
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * A real calendar picker on web (the actual deployment target), via a plain
+ * DOM <input type="date"> — React Native has no cross-platform date-picker
+ * primitive, and pulling in a native picker library is not worth it for a
+ * feature the native build does not ship yet. React.createElement bypasses
+ * JSX's intrinsic-element typing, since <input> is not a valid RN component
+ * name. Native falls back to a validated text field below.
+ */
+function WebDateInput({
+  value,
+  onChange,
+  max,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  max?: string;
+}) {
+  return createElement('input', {
+    type: 'date',
+    value,
+    max,
+    onChange: (e: { target: { value: string } }) => onChange(e.target.value),
+    style: {
+      fontFamily: 'inherit',
+      fontSize: 14,
+      padding: '10px 12px',
+      borderRadius: radius.sm,
+      border: `1px solid ${color.border}`,
+      color: color.ink,
+      background: color.surface,
+      width: '100%',
+    },
+  });
+}
 
 /** '2026-08' -> 'August 2026', for the month chips. */
 function monthLabel(ym: string): string {
@@ -32,18 +77,36 @@ export default function AuditLog() {
   const [table, setTable] = useState('');
   const [actorId, setActorId] = useState('');
   const [month, setMonth] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
   const [expanded, setExpanded] = useState<number | null>(null);
   const [printing, setPrinting] = useState(false);
 
   const { data: months } = useAuditMonths(activeEntity?.id);
 
+  // A custom range takes over from the month chips rather than combining with
+  // them — mixing "August" with an explicit from/to would be ambiguous about
+  // which one actually bounds the query.
+  const hasRange = DATE_RE.test(fromDate) || DATE_RE.test(toDate);
+  const rangeInvalid =
+    DATE_RE.test(fromDate) && DATE_RE.test(toDate) && fromDate > toDate;
+
   const events = useAuditEvents(activeEntity?.id, {
     table: table || undefined,
     actorId: actorId || undefined,
-    month: month || undefined,
+    month: hasRange ? undefined : month || undefined,
+    from: !rangeInvalid && DATE_RE.test(fromDate) ? fromDate : undefined,
+    to: !rangeInvalid && DATE_RE.test(toDate) ? toDate : undefined,
   });
   const chain = useChainIntegrity();
   const { data: directors } = useDirectors();
+  const { data: accounts } = useAccounts(activeEntity?.id);
+  const { data: budgetLines } = useBudgetSummary(activeEntity?.id);
+
+  function clearRange() {
+    setFromDate('');
+    setToDate('');
+  }
 
   const nameOf = (id: string | null) =>
     id ? (directors?.find((d) => d.id === id)?.full_name ?? 'Unknown') : 'System';
@@ -61,10 +124,16 @@ export default function AuditLog() {
         entityLegalName: activeEntity.legal_name,
         events: events.data ?? [],
         directors: directors ?? [],
+        accounts: accounts ?? [],
+        budgetLines: budgetLines ?? [],
         chain: fresh.data ?? chain.data,
         generatedBy: director?.full_name ?? 'Unknown',
         filterNote: [
-          month ? monthLabel(month) : 'All time',
+          hasRange
+            ? `${fromDate || 'earliest'} to ${toDate || 'latest'}`
+            : month
+              ? monthLabel(month)
+              : 'All time',
           table ? TABLES.find((t) => t.value === table)?.label : null,
           actorId ? nameOf(actorId) : null,
         ]
@@ -78,9 +147,55 @@ export default function AuditLog() {
     }
   }
 
+  const today = new Date().toISOString().slice(0, 10);
+
   const header = (
     <View style={s.header}>
-      {months && months.length > 0 ? (
+      <Text style={s.groupLabel}>CUSTOM RANGE</Text>
+      <View style={s.rangeRow}>
+        <View style={s.rangeField}>
+          {Platform.OS === 'web' ? (
+            <>
+              <Text style={s.rangeLabel}>From</Text>
+              <WebDateInput value={fromDate} onChange={setFromDate} max={toDate || today} />
+            </>
+          ) : (
+            <Field
+              label="From"
+              value={fromDate}
+              onChangeText={setFromDate}
+              placeholder="YYYY-MM-DD"
+              keyboardType="numbers-and-punctuation"
+            />
+          )}
+        </View>
+        <View style={s.rangeField}>
+          {Platform.OS === 'web' ? (
+            <>
+              <Text style={s.rangeLabel}>To</Text>
+              <WebDateInput value={toDate} onChange={setToDate} max={today} />
+            </>
+          ) : (
+            <Field
+              label="To"
+              value={toDate}
+              onChangeText={setToDate}
+              placeholder="YYYY-MM-DD"
+              keyboardType="numbers-and-punctuation"
+            />
+          )}
+        </View>
+        {hasRange ? (
+          <Pressable onPress={clearRange} style={s.rangeClear}>
+            <Text style={s.rangeClearText}>Clear</Text>
+          </Pressable>
+        ) : null}
+      </View>
+      {rangeInvalid ? (
+        <Text style={s.rangeError}>The "From" date is after the "To" date.</Text>
+      ) : null}
+
+      {!hasRange && months && months.length > 0 ? (
         <View style={s.filters}>
           <Pressable
             onPress={() => setMonth('')}
@@ -106,14 +221,16 @@ export default function AuditLog() {
         label={
           printing
             ? 'Preparing…'
-            : month
-              ? `Print ${monthLabel(month)} audit (PDF)`
-              : 'Print audit log (PDF)'
+            : hasRange
+              ? `Print ${fromDate || 'earliest'} to ${toDate || 'latest'} (PDF)`
+              : month
+                ? `Print ${monthLabel(month)} audit (PDF)`
+                : 'Print audit log (PDF)'
         }
         variant="secondary"
         onPress={() => void printReport()}
         loading={printing}
-        disabled={(events.data ?? []).length === 0}
+        disabled={(events.data ?? []).length === 0 || rangeInvalid}
       />
 
       {chain.data ? (
@@ -250,6 +367,13 @@ const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: color.canvas },
   content: { padding: space.lg },
   header: { marginBottom: space.md },
+  groupLabel: { ...type.micro, color: color.inkMuted, letterSpacing: 1, marginTop: space.md },
+  rangeRow: { flexDirection: 'row', alignItems: 'flex-end', gap: space.sm, marginTop: space.xs },
+  rangeField: { flex: 1 },
+  rangeLabel: { ...type.caption, color: color.inkMuted, marginBottom: 4 },
+  rangeClear: { paddingHorizontal: space.sm, paddingVertical: space.sm + 2 },
+  rangeClearText: { ...type.caption, color: color.accent, fontWeight: '600' },
+  rangeError: { ...type.caption, color: color.danger, marginTop: space.xs },
 
   filters: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginTop: space.md },
   chip: {
