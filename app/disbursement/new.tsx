@@ -70,6 +70,11 @@ export default function NewDisbursement() {
   // convenience check rather than the actual control.
   const { receipt, setReceipt, preparing, promptUpload, error: pickError } = useReceiptPicker();
 
+  // Same double-submit window as the expenditure form: uploadReceipt() runs
+  // before the mutation, so isPending alone leaves the button live during the
+  // upload. Two taps there create two records of one payment.
+  const [submitting, setSubmitting] = useState(false);
+
   const canSubmit =
     !!category &&
     !!fromAccountId &&
@@ -77,11 +82,13 @@ export default function NewDisbursement() {
     amountValid &&
     !!receipt &&
     !preparing &&
+    !submitting &&
     (method === 'cash' || !!accountRef.trim());
 
   async function submit() {
     if (!canSubmit || !activeEntity) return;
     setError(null);
+    setSubmitting(true);
 
     try {
       const uploaded = await uploadReceipt(activeEntity.id, receipt!);
@@ -116,6 +123,8 @@ export default function NewDisbursement() {
     } catch (e) {
       setError(humanError(e));
       setSuccess(null);
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -238,7 +247,7 @@ export default function NewDisbursement() {
         <Button
           label="Record disbursement"
           onPress={submit}
-          loading={record.isPending}
+          loading={submitting || record.isPending}
           disabled={!canSubmit}
         />
 

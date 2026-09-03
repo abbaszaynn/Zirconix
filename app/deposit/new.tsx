@@ -56,16 +56,23 @@ export default function NewDeposit() {
   const numericAmount = Number(amount.replace(/,/g, ''));
   const amountValid = Number.isFinite(numericAmount) && numericAmount > 0;
 
+  // Same double-submit window as the expenditure form: uploadReceipt() runs
+  // before the mutation, so isPending alone leaves the button live during the
+  // upload. Two taps there create two records of one payment.
+  const [submitting, setSubmitting] = useState(false);
+
   const canSubmit =
     !!toAccountId &&
     amountValid &&
     !!receipt &&
     !preparing &&
+    !submitting &&
     (sourceType === 'director' ? !!sourceDirectorId : !!sourceInvestorName.trim());
 
   async function submit() {
     if (!canSubmit || !activeEntity || !toAccountId || !director) return;
     setError(null);
+    setSubmitting(true);
 
     try {
       // Upload first, then one RPC writes the deposit and its proof together.
@@ -95,6 +102,8 @@ export default function NewDeposit() {
     } catch (e) {
       setError(humanError(e));
       setSuccess(null);
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -191,7 +200,7 @@ export default function NewDeposit() {
         <Button
           label="Record incoming funds"
           onPress={submit}
-          loading={record.isPending}
+          loading={submitting || record.isPending}
           disabled={!canSubmit}
         />
 

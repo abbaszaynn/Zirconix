@@ -75,8 +75,16 @@ export default function NewExpenditure() {
   const amountValid = Number.isFinite(numericAmount) && numericAmount > 0;
   const overAdvance = selected && amountValid && numericAmount > Number(selected.remaining);
 
+  // Guards the window BEFORE the mutation starts. uploadReceipt() runs first
+  // and can take a second or more on a site connection, during which the
+  // mutation's isPending is still false and the button stays live — two taps
+  // there produced two uploads and two identical entries. This is what put
+  // 194,106 of duplicate expenditures into the ledger on 24 August.
+  const [submitting, setSubmitting] = useState(false);
+
   const canSubmit =
-    !!disbursementId && amountValid && !!category && !!payee.trim() && (isEditing || !!receipt) && !preparing;
+    !!disbursementId && amountValid && !!category && !!payee.trim() &&
+    (isEditing || !!receipt) && !preparing && !submitting;
 
   useEffect(() => {
     if (!isEditing && !disbursementId && advances.data && advances.data.length > 0) {
@@ -166,6 +174,7 @@ export default function NewExpenditure() {
   async function submit() {
     if (!canSubmit || !activeEntity || !disbursementId || !category) return;
     setError(null);
+    setSubmitting(true);
 
     try {
       if (isEditing && editData) {
@@ -362,7 +371,12 @@ export default function NewExpenditure() {
         <Button
           label={isEditing ? 'Update expenditure' : 'Record expenditure'}
           onPress={submit}
-          loading={logExpenditure.isPending || updateExpenditure.isPending || replaceReceipt.isPending}
+          loading={
+            submitting ||
+            logExpenditure.isPending ||
+            updateExpenditure.isPending ||
+            replaceReceipt.isPending
+          }
           disabled={!canSubmit}
           style={{ marginTop: space.lg }}
         />
