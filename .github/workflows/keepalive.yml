@@ -9,10 +9,18 @@
 # reason other than pausing, the workflow fails and you find out from a GitHub
 # notification rather than from a director.
 #
-# Required repository secrets:
-#   SUPABASE_URL       https://<ref>.supabase.co
-#   SUPABASE_ANON_KEY  The publishable/anon key. Safe here — RLS still applies,
-#                      and the endpoint below reads nothing.
+# The URL and key below are the PUBLIC ones — the same two values already
+# shipped inside the web bundle and committed in eas.json. RLS is what protects
+# the data, and the endpoint below reads nothing. They are used as defaults so
+# this workflow does not depend on repository secrets having been set: for its
+# first three months every run failed at the ping step because they had not
+# been, and the project paused anyway. SUPABASE_URL / SUPABASE_ANON_KEY secrets,
+# if present, still take precedence.
+#
+# GitHub also disables scheduled workflows after 60 days with no commit to the
+# repository (scheduled runs themselves do not count). The first step below
+# makes an empty commit when the last one is over 30 days old, so a quiet
+# stretch cannot silently switch this — and the nightly backup — off.
 
 name: Keep alive
 
@@ -22,33 +30,54 @@ on:
     - cron: '0 6 */3 * *'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   ping:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
     steps:
-      - name: Ping PostgREST
-        env:
-          URL: ${{ secrets.SUPABASE_URL }}
-          KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      - uses: actions/checkout@v4
+
+      - name: Keep scheduled workflows from being auto-disabled
         run: |
           set -euo pipefail
+          AGE_DAYS=$(( ( $(date +%s) - $(git log -1 --format=%ct) ) / 86400 ))
+          echo "Last commit is $AGE_DAYS day(s) old."
+          if [ "$AGE_DAYS" -ge 30 ]; then
+            git config user.name  "zirconix-keepalive"
+            git config user.email "zirconix-keepalive@users.noreply.github.com"
+            git commit --allow-empty -m "chore: keep scheduled workflows enabled (last commit ${AGE_DAYS}d ago) [skip ci]"
+            git push
+          fi
 
-          # entities is RLS-protected, so an anon caller gets an empty array.
-          # That is fine: the point is to make the database serve a request, not
-          # to read anything.
-          STATUS=$(curl -s -o /tmp/body -w '%{http_code}' \
+      - name: Ping PostgREST
+        env:
+          URL: ${{ secrets.SUPABASE_URL || 'https://vcoagdrbqsxshczvnwrp.supabase.co' }}
+          KEY: ${{ secrets.SUPABASE_ANON_KEY || 'sb_publishable_hWWw0KpIi--8mYRWGC0ELQ_n51ApxC_' }}
+        run: |
+          set -uo pipefail
+          rm -f /tmp/body
+
+          # entities is RLS-protected, so an anon caller is refused. That is
+          # fine: the point is to make the database serve a request, not to
+          # read anything.
+          STATUS=$(curl -s -o /tmp/body -w '%{http_code}' --max-time 30 --retry 2 \
             -H "apikey: $KEY" \
             -H "Authorization: Bearer $KEY" \
-            "$URL/rest/v1/entities?select=id&limit=1")
+            "$URL/rest/v1/entities?select=id&limit=1") || STATUS=000
 
           echo "HTTP $STATUS"
-          cat /tmp/body
+          cat /tmp/body 2>/dev/null || true
+          echo
 
-          # 200 (empty array) and 401/403 both prove the project is awake and
-          # serving. A 5xx or a connection failure does not.
+          # 200, 401 and 403 all prove the project is awake and serving. A 5xx
+          # or no answer at all does not — and no answer at all is exactly what
+          # a paused project looks like, since its hostname stops resolving.
           case "$STATUS" in
             200|401|403) echo "Project is awake." ;;
-            *) echo "::error::Unexpected status $STATUS from Supabase."; exit 1 ;;
+            000) echo "::error::Supabase did not answer. The project is most likely PAUSED — restore it in the Supabase dashboard."; exit 1 ;;
+            *)   echo "::error::Unexpected status $STATUS from Supabase."; exit 1 ;;
           esac
