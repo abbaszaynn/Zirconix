@@ -142,6 +142,15 @@ create view ops.deposits as
   left join public.investors i on i.id = al.investor_id
   left join public.directors sd on sd.id = d.source_director_id;
 
+-- Money sent out of each account, dated, so a bank statement can be checked
+-- against the balance on the statement date rather than today's.
+create view ops.transfers as
+  select t.id, coalesce(t.disbursed_on, t.created_at::date) as transfer_date, t.amount, t.from_account_id as account_id,
+         dp.project_id, t.status::text as status, t.created_at
+  from public.disbursements t
+  left join public.disbursement_projects dp on dp.disbursement_id = t.id
+  where t.voided_at is null and t.status <> 'rejected';
+
 -- Spending lines charged to a project (through the transfer they were paid from).
 create view ops.project_spending as
   select dp.project_id, e.id, e.spent_on, e.category, e.payee, e.amount, e.receipt_count,
